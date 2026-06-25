@@ -9,7 +9,7 @@ import routes from "./routes";
 import { errorHandler } from "./middlewares/errorHandler";
 import { notFound } from "./middlewares/notFound";
 
-const app = express();
+const app: express.Application = express();
 
 app.use(helmet());
 app.use(cors());

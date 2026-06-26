@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { env } from "../config/env";
 import { supabaseAdmin } from "../lib/supabase";
 
@@ -84,7 +85,51 @@ export class NombaService {
     return data.data?.status === "SUCCESS";
   }
 
-  static async handleWebhook(payload: any): Promise<void> {
+  static generateSignature(payload: any, secret: string, timeStamp: string): string {
+    const data = payload.data || {};
+    const merchant = data.merchant || {};
+    const transaction = data.transaction || {};
+
+    const eventType = payload.event_type || "";
+    const requestId = payload.requestId || "";
+    const userId = merchant.userId || "";
+    const walletId = merchant.walletId || "";
+    const transactionId = transaction.transactionId || "";
+    const transactionType = transaction.type || "";
+    const transactionTime = transaction.time || "";
+    let transactionResponseCode = transaction.responseCode || "";
+
+    if (transactionResponseCode === "null") {
+      transactionResponseCode = "";
+    }
+
+    const hashingPayload = `${eventType}:${requestId}:${userId}:${walletId}:${transactionId}:${transactionType}:${transactionTime}:${transactionResponseCode}:${timeStamp}`;
+
+    const hmac = crypto.createHmac("sha256", secret);
+    hmac.update(hashingPayload);
+    return hmac.digest("base64");
+  }
+
+  static async handleWebhook(payload: any, headers?: any): Promise<void> {
+    // 0. Verify webhook signature
+    if (headers) {
+      const signatureValue = headers["nomba-signature"] || headers["nomba-sig-value"];
+      const nombaTimeStamp = headers["nomba-timestamp"];
+      
+      if (signatureValue && nombaTimeStamp) {
+        // Fallback to client secret if webhook secret isn't set, as some accounts might use it
+        const secret = env.NOMBA_WEBHOOK_SECRET || env.NOMBA_CLIENT_SECRET;
+        const mySig = this.generateSignature(payload, secret, nombaTimeStamp);
+        
+        if (mySig.toLowerCase() !== signatureValue.toLowerCase()) {
+          console.warn("Webhook signature mismatch!", { expected: signatureValue, generated: mySig });
+          throw new Error("Invalid webhook signature");
+        }
+      } else {
+        console.warn("Missing webhook signature headers. Proceeding without verification.");
+      }
+    }
+
     // 1. Verify webhook structure
     if (payload.event_type !== "payment_success") return;
 

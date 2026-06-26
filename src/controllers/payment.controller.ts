@@ -6,7 +6,7 @@ import { supabaseAdmin } from "../lib/supabase";
 export class PaymentController {
   static async webhook(req: Request, res: Response) {
     try {
-      await NombaService.handleWebhook(req.body);
+      await NombaService.handleWebhook(req.body, req.headers);
       res.status(StatusCodes.OK).send("OK");
     } catch (error) {
       console.error("Webhook error:", error);

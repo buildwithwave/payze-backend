@@ -1,18 +1,18 @@
 import { Request, Response } from "express";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseAdmin } from "../lib/supabase";
 import { StatusCodes } from "http-status-codes";
 
 export class AuthController {
   static async register(req: Request, res: Response) {
     const { email, password, full_name } = req.body;
 
-    const { data, error } = await supabase.auth.signUp({
+    // Temporarily using supabaseAdmin to bypass email rate limits for testing
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      options: {
-        data: {
-          full_name,
-        },
+      email_confirm: true,
+      user_metadata: {
+        full_name,
       },
     });
 

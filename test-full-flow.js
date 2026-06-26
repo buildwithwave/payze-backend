@@ -5,7 +5,7 @@ async function runFlow() {
   console.log(`Starting full user flow testing on ${BASE_URL}...\n`);
 
   // Generate unique user
-  const email = `testuser_${crypto.randomBytes(4).toString('hex')}@example.com`;
+  const email = `testuser_${crypto.randomBytes(4).toString('hex')}@testpayze.com`;
   const password = "password123";
   let token = "";
 

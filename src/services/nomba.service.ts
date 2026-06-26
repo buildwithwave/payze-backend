@@ -27,7 +27,7 @@ export class NombaService {
 
   static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{ checkoutLink: string; orderReference: string }> {
     const token = await this.getAccessToken();
-    const orderReference = `payze_${invoiceId}_${Date.now()}`;
+    const orderReference = `pz_${invoiceId}`;
 
     const url = `${env.NOMBA_BASE_URL}/v1/checkout/order`;
     const response = await fetch(url, {
@@ -35,7 +35,7 @@ export class NombaService {
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
-        "accountId": env.NOMBA_SUB_ACCOUNT_ID || env.NOMBA_ACCOUNT_ID,
+        "accountId": env.NOMBA_ACCOUNT_ID,
       },
       body: JSON.stringify({
         order: {
@@ -55,6 +55,11 @@ export class NombaService {
     }
 
     const data = (await response.json()) as any;
+    if (!data || !data.data) {
+      console.error("Unexpected Nomba response:", data);
+      throw new Error(`Invalid response format from Nomba: ${JSON.stringify(data)}`);
+    }
+
     return {
       checkoutLink: data.data.checkoutLink,
       orderReference: data.data.orderReference,
@@ -69,7 +74,7 @@ export class NombaService {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${token}`,
-        "accountId": env.NOMBA_SUB_ACCOUNT_ID || env.NOMBA_ACCOUNT_ID,
+        "accountId": env.NOMBA_ACCOUNT_ID,
       },
     });
 
@@ -88,7 +93,7 @@ export class NombaService {
 
     if (!transaction || !order) return;
 
-    // 2. The orderReference contains the invoiceId "payze_<invoiceId>_<timestamp>"
+    // 2. The orderReference contains the invoiceId "pz_<invoiceId>"
     const refParts = order.orderReference.split("_");
     if (refParts.length < 2) return;
     const invoiceId = refParts[1];

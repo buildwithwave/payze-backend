@@ -35,7 +35,7 @@ export class NombaService {
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
-        "accountId": env.NOMBA_ACCOUNT_ID,
+        "accountId": env.NOMBA_SUB_ACCOUNT_ID || env.NOMBA_ACCOUNT_ID,
       },
       body: JSON.stringify({
         order: {
@@ -69,7 +69,7 @@ export class NombaService {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${token}`,
-        "accountId": env.NOMBA_ACCOUNT_ID,
+        "accountId": env.NOMBA_SUB_ACCOUNT_ID || env.NOMBA_ACCOUNT_ID,
       },
     });
 

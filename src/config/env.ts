@@ -14,6 +14,7 @@ export const env = {
   NOMBA_CLIENT_ID: process.env.NOMBA_CLIENT_ID || "",
   NOMBA_CLIENT_SECRET: process.env.NOMBA_CLIENT_SECRET || "",
   NOMBA_ACCOUNT_ID: process.env.NOMBA_ACCOUNT_ID || "",
+  NOMBA_SUB_ACCOUNT_ID: process.env.NOMBA_SUB_ACCOUNT_ID || "",
   NOMBA_BASE_URL: process.env.NOMBA_BASE_URL || "https://api.nomba.com",
 
   APP_BASE_URL: process.env.APP_BASE_URL || "https://aurea-nonattributive-vyingly.ngrok-free.dev",

@@ -17,18 +17,21 @@
   "type": "commonjs",
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
+    "cloudinary": "^2.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^4.22.2",
     "express-async-errors": "^3.1.1",
     "helmet": "^8.2.0",
     "http-status-codes": "^2.3.0",
-    "morgan": "^1.11.0"
+    "morgan": "^1.11.0",
+    "multer": "^2.2.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.1.0",
     "@types/node": "^26.0.1",
     "nodemon": "^3.1.14",
     "supabase": "^2.108.0",

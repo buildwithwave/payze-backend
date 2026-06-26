@@ -10,6 +10,7 @@ export interface Product {
   store_id: string;
   name: string;
   barcode?: string;
+  image_url?: string;
   price: number;
   stock_quantity: number;
   created_at: string;

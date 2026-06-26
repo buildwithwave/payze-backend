@@ -20,6 +20,7 @@ CREATE TABLE public.products (
   store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   barcode TEXT,
+  image_url TEXT,
   price NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
   stock_quantity INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

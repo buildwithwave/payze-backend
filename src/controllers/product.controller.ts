@@ -34,4 +34,15 @@ export class ProductController {
     await ProductService.deleteProduct(id as string);
     res.status(StatusCodes.NO_CONTENT).send();
   }
+
+  static async uploadImage(req: Request, res: Response) {
+    const { id } = req.params;
+    if (!req.file) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "No image file provided" });
+    }
+
+    const product = await ProductService.uploadProductImage(id as string, req.file);
+    res.status(StatusCodes.OK).json(product);
+  }
 }
+

@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "nodemon",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "migration:new": "supabase migration new",
+    "migration:push": "supabase db push",
+    "migration:pull": "supabase db pull"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^4.22.2",
@@ -27,6 +31,7 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^26.0.1",
     "nodemon": "^3.1.14",
+    "supabase": "^2.108.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }

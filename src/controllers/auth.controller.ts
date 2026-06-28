@@ -3,16 +3,32 @@ import { supabase, supabaseAdmin } from "../lib/supabase";
 import { StatusCodes } from "http-status-codes";
 
 export class AuthController {
-  static async register(req: Request, res: Response) {
-    const { email, password, full_name } = req.body;
+  static async checkEmail(req: Request, res: Response) {
+    const { email } = req.body;
 
-    // Temporarily using supabaseAdmin to bypass email rate limits for testing
+    if (!email) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "Email is required" });
+    }
+
+    const { data, error } = await supabaseAdmin.rpc("get_user_by_email", { email_input: email }).maybeSingle();
+
+    const exists = !!data && !error;
+
+    res.status(StatusCodes.OK).json({ exists });
+  }
+
+  static async register(req: Request, res: Response) {
+    const { email, password, firstName, lastName, businessName, phone } = req.body;
+
     const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
       user_metadata: {
-        full_name,
+        first_name: firstName,
+        last_name: lastName,
+        business_name: businessName,
+        phone,
       },
     });
 

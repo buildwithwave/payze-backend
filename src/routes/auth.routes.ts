@@ -6,6 +6,38 @@ const router: Router = Router();
 
 /**
  * @swagger
+ * /auth/check-email:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Check if an email is already registered
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *     responses:
+ *       200:
+ *         description: Email check result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 exists:
+ *                   type: boolean
+ *       400:
+ *         description: Email is required
+ */
+router.post("/check-email", AuthController.checkEmail);
+
+/**
+ * @swagger
  * /auth/register:
  *   post:
  *     tags: [Auth]
@@ -16,16 +48,23 @@ const router: Router = Router();
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email, password, full_name]
+ *             required: [email, password, firstName, lastName, businessName, phone]
  *             properties:
  *               email:
  *                 type: string
  *                 format: email
+ *               firstName:
+ *                 type: string
+ *               lastName:
+ *                 type: string
+ *               businessName:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *                 example: "+2348012345678"
  *               password:
  *                 type: string
- *                 minLength: 6
- *               full_name:
- *                 type: string
+ *                 minLength: 8
  *     responses:
  *       201:
  *         description: User registered successfully

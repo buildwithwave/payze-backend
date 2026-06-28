@@ -159,6 +159,11 @@ export class NombaService {
 
     if (!payment) return;
 
+    if (payment.status === "successful") {
+      console.log(`Payment for invoice ${invoiceId} is already marked as successful. Ignoring duplicate webhook.`);
+      return;
+    }
+
     await supabaseAdmin
       .from("payments")
       .update({
@@ -172,6 +177,21 @@ export class NombaService {
       .from("invoices")
       .update({ status: "paid" })
       .eq("id", invoiceId);
+
+    // 5.5 Decrement stock quantities for purchased items
+    const { data: invoiceItems } = await supabaseAdmin
+      .from("invoice_items")
+      .select("product_id, quantity")
+      .eq("invoice_id", invoiceId);
+
+    if (invoiceItems && invoiceItems.length > 0) {
+      for (const item of invoiceItems) {
+        await supabaseAdmin.rpc("decrement_stock", {
+          p_id: item.product_id,
+          q_subtract: item.quantity,
+        });
+      }
+    }
 
     // 6. Create receipt
     const receiptNumber = `REC-${Date.now().toString().slice(-6)}`;

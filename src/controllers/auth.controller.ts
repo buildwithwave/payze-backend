@@ -10,9 +10,13 @@ export class AuthController {
       return res.status(StatusCodes.BAD_REQUEST).json({ error: "Email is required" });
     }
 
-    const { data, error } = await supabaseAdmin.rpc("get_user_by_email", { email_input: email }).maybeSingle();
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers();
 
-    const exists = !!data && !error;
+    if (error) {
+      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: "Failed to check email" });
+    }
+
+    const exists = data.users.some((user) => user.email === email);
 
     res.status(StatusCodes.OK).json({ exists });
   }
@@ -36,9 +40,19 @@ export class AuthController {
       return res.status(StatusCodes.BAD_REQUEST).json({ error: error.message });
     }
 
+    const user = data.user;
+
     res.status(StatusCodes.CREATED).json({
       message: "User registered successfully",
-      user: data.user,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.user_metadata?.first_name,
+        lastName: user.user_metadata?.last_name,
+        businessName: user.user_metadata?.business_name,
+        phone: user.user_metadata?.phone,
+        createdAt: user.created_at,
+      },
     });
   }
 

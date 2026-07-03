@@ -10,7 +10,7 @@ export class NombaService {
       return this.cachedToken.token;
     }
 
-    const url = `${env.NOMBA_BASE_URL}/v1/auth/token/issue`;
+    const url = `${env.NOMBA_BASE_URL}/auth/token/issue`;
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -65,7 +65,7 @@ export class NombaService {
   }
 
   static async listBanks(): Promise<Array<{ name: string; code: string }>> {
-    const payload = await this.request("/v1/transfers/banks");
+    const payload = await this.request("/transfers/banks");
     const raw = Array.isArray(payload?.data) ? payload.data : payload?.data?.banks ?? [];
     return raw.map((b: any) => ({
       name: b.name ?? b.bankName,
@@ -74,7 +74,7 @@ export class NombaService {
   }
 
   static async lookupAccount(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
-    const payload = await this.request("/v1/transfers/bank/lookup", {
+    const payload = await this.request("/transfers/bank/lookup", {
       method: "POST",
       body: { accountNumber, bankCode },
     });
@@ -92,7 +92,7 @@ export class NombaService {
     senderName: string;
     narration?: string;
   }): Promise<{ status: string; providerRef?: string }> {
-    const payload = await this.request("/v1/transfers/bank", {
+    const payload = await this.request("/transfers/bank", {
       method: "POST",
       body: params,
     });
@@ -108,7 +108,7 @@ export class NombaService {
     accountName: string | null;
     providerRef: string | null;
   }> {
-    const payload = await this.request("/v1/accounts/virtual", {
+    const payload = await this.request("/accounts/virtual", {
       method: "POST",
       body: { accountRef, accountName },
     });
@@ -127,7 +127,7 @@ export class NombaService {
     const token = await this.getAccessToken();
     const orderReference = `pz_${invoiceId}`;
 
-    const url = `${env.NOMBA_BASE_URL}/v1/checkout/order`;
+    const url = `${env.NOMBA_BASE_URL}/checkout/order`;
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -167,7 +167,7 @@ export class NombaService {
   static async verifyPayment(transactionRef: string): Promise<boolean> {
     const token = await this.getAccessToken();
     
-    const url = `${env.NOMBA_BASE_URL}/v1/transactions/accounts/single?transactionRef=${transactionRef}`;
+    const url = `${env.NOMBA_BASE_URL}/transactions/accounts/single?transactionRef=${transactionRef}`;
     const response = await fetch(url, {
       method: "GET",
       headers: {

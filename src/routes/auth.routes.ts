@@ -116,4 +116,57 @@ router.post("/login", AuthController.login);
  */
 router.get("/users/me", requireAuth, AuthController.getMe);
 
+/**
+ * @swagger
+ * /auth/users/me:
+ *   patch:
+ *     tags: [Auth]
+ *     summary: Update the current user's profile
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               firstName: { type: string }
+ *               lastName: { type: string }
+ *               businessName: { type: string }
+ *               phone: { type: string }
+ *     responses:
+ *       200:
+ *         description: Updated user
+ *       400:
+ *         description: No fields to update
+ */
+router.patch("/users/me", requireAuth, AuthController.updateMe);
+
+/**
+ * @swagger
+ * /auth/change-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Change the current user's password
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword]
+ *             properties:
+ *               currentPassword: { type: string }
+ *               newPassword: { type: string, minLength: 8 }
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Current password is incorrect
+ */
+router.post("/change-password", requireAuth, AuthController.changePassword);
+
 export default router;

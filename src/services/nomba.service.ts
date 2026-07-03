@@ -3,7 +3,13 @@ import { env } from "../config/env";
 import { supabaseAdmin } from "../lib/supabase";
 
 export class NombaService {
+  private static cachedToken: { token: string; expiresAt: number } | null = null;
+
   private static async getAccessToken(): Promise<string> {
+    if (this.cachedToken && Date.now() < this.cachedToken.expiresAt) {
+      return this.cachedToken.token;
+    }
+
     const url = `${env.NOMBA_BASE_URL}/v1/auth/token/issue`;
     const response = await fetch(url, {
       method: "POST",
@@ -23,7 +29,98 @@ export class NombaService {
     }
 
     const data = (await response.json()) as any;
+    // Tokens last ~30 min; refresh 1 min early. Fall back to 25 min if unspecified.
+    const expiresAtMs = Date.parse(data.data.expiresAt ?? "") || Date.now() + 26 * 60 * 1000;
+    this.cachedToken = { token: data.data.access_token, expiresAt: expiresAtMs - 60 * 1000 };
     return data.data.access_token;
+  }
+
+  private static async request(path: string, options: { method?: string; body?: unknown } = {}): Promise<any> {
+    const token = await this.getAccessToken();
+    const response = await fetch(`${env.NOMBA_BASE_URL}${path}`, {
+      method: options.method ?? "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "accountId": env.NOMBA_ACCOUNT_ID,
+      },
+      ...(options.body !== undefined && { body: JSON.stringify(options.body) }),
+    });
+
+    const text = await response.text();
+    let payload: any = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON error body
+    }
+
+    if (!response.ok) {
+      const message = payload?.description || payload?.message || `Nomba request failed (${response.status})`;
+      console.error(`Nomba ${options.method ?? "GET"} ${path} failed:`, text);
+      throw new Error(message);
+    }
+
+    return payload;
+  }
+
+  static async listBanks(): Promise<Array<{ name: string; code: string }>> {
+    const payload = await this.request("/v1/transfers/banks");
+    const raw = Array.isArray(payload?.data) ? payload.data : payload?.data?.banks ?? [];
+    return raw.map((b: any) => ({
+      name: b.name ?? b.bankName,
+      code: String(b.code ?? b.bankCode),
+    }));
+  }
+
+  static async lookupAccount(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
+    const payload = await this.request("/v1/transfers/bank/lookup", {
+      method: "POST",
+      body: { accountNumber, bankCode },
+    });
+    const accountName = payload?.data?.accountName ?? payload?.data?.account_name;
+    if (!accountName) throw new Error("Could not resolve account name");
+    return { accountName };
+  }
+
+  static async transferToBank(params: {
+    amount: number;
+    accountNumber: string;
+    bankCode: string;
+    accountName: string;
+    merchantTxRef: string;
+    senderName: string;
+    narration?: string;
+  }): Promise<{ status: string; providerRef?: string }> {
+    const payload = await this.request("/v1/transfers/bank", {
+      method: "POST",
+      body: params,
+    });
+    return {
+      status: String(payload?.data?.status ?? "").toUpperCase(),
+      providerRef: payload?.data?.id ?? payload?.data?.meta?.rrn,
+    };
+  }
+
+  static async createVirtualAccount(accountRef: string, accountName: string): Promise<{
+    accountNumber: string | null;
+    bankName: string | null;
+    accountName: string | null;
+    providerRef: string | null;
+  }> {
+    const payload = await this.request("/v1/accounts/virtual", {
+      method: "POST",
+      body: { accountRef, accountName },
+    });
+    const d = payload?.data ?? {};
+    // Nomba nests the assigned number differently across API versions — check the known spots
+    const bank = Array.isArray(d.banks) && d.banks.length > 0 ? d.banks[0] : null;
+    return {
+      accountNumber: d.bankAccountNumber ?? d.accountNumber ?? bank?.accountNumber ?? null,
+      bankName: d.bankName ?? bank?.bankName ?? "Nomba MFB",
+      accountName: d.bankAccountName ?? d.accountName ?? accountName,
+      providerRef: d.accountHolderId ?? d.accountRef ?? accountRef,
+    };
   }
 
   static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{ checkoutLink: string; orderReference: string }> {
@@ -173,10 +270,26 @@ export class NombaService {
       .eq("id", payment.id);
 
     // 5. Update invoice status
-    await supabaseAdmin
+    const { data: paidInvoice } = await supabaseAdmin
       .from("invoices")
       .update({ status: "paid" })
-      .eq("id", invoiceId);
+      .eq("id", invoiceId)
+      .select("id, store_id, total_amount")
+      .single();
+
+    // 5.1 Record the credit in the wallet ledger (idempotent via unique reference)
+    if (paidInvoice) {
+      const method = String(order.paymentMethod ?? "").toLowerCase();
+      await supabaseAdmin.from("transactions").insert({
+        store_id: paidInvoice.store_id,
+        type: "credit",
+        channel: method.includes("card") ? "card" : "transfer",
+        amount: paidInvoice.total_amount,
+        reference: transaction.transactionId,
+        counterparty: payload.data?.customer?.senderName ?? null,
+        status: "successful",
+      });
+    }
 
     // 5.5 Decrement stock quantities for purchased items
     const { data: invoiceItems } = await supabaseAdmin

@@ -36,6 +36,26 @@ router.post("/", StoreController.createStore);
 
 /**
  * @swagger
+ * /stores:
+ *   get:
+ *     tags: [Stores]
+ *     summary: List the authenticated user's stores
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of stores
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Store'
+ */
+router.get("/", StoreController.listStores);
+
+/**
+ * @swagger
  * /stores/{id}:
  *   get:
  *     tags: [Stores]

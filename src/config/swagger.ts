@@ -5,9 +5,9 @@ const options: swaggerJsdoc.Options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "Payzee API",
+      title: "Payze API",
       version: "1.0.0",
-      description: "API documentation for Payzee payment backend",
+      description: "API documentation for Payze payment backend",
     },
     servers: [
       {

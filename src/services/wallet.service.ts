@@ -45,7 +45,7 @@ export class WalletService {
     };
   }
 
-  private static async getOrCreateVirtualAccount(store: Store): Promise<WalletAccount | null> {
+  static async getOrCreateVirtualAccount(store: Store): Promise<WalletAccount | null> {
     const { data: existing, error } = await supabaseAdmin
       .from("wallet_accounts")
       .select()

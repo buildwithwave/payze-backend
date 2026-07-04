@@ -110,7 +110,7 @@ export class NombaService {
   }> {
     const payload = await this.request("/v1/accounts/virtual", {
       method: "POST",
-      body: { accountRef, accountName },
+      body: { accountRef, accountName, currency: "NGN" },
     });
     const d = payload?.data ?? {};
     // Nomba nests the assigned number differently across API versions — check the known spots

@@ -3,6 +3,8 @@ import { supabaseAdmin } from "../lib/supabase";
 import { Store } from "../types";
 import { AppError } from "../utils/appError";
 
+import { WalletService } from "./wallet.service";
+
 export class StoreService {
   static async createStore(userId: string, name: string): Promise<Store> {
     if (!name || !name.trim()) {
@@ -16,6 +18,11 @@ export class StoreService {
       .single();
 
     if (error) throw new AppError(error.message);
+
+    // Provision virtual account immediately in the background or awaited.
+    // getOrCreateVirtualAccount handles its own errors silently.
+    await WalletService.getOrCreateVirtualAccount(data);
+
     return data;
   }
 

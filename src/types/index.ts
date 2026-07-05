@@ -100,6 +100,9 @@ export interface CreateCheckoutSessionRequest {
     productId: string;
     quantity: number;
   }>;
+  discount?: number;
+  customerName?: string;
+  paymentMethod?: "card" | "transfer";
 }
 
 export interface NombaWebhookPayload {

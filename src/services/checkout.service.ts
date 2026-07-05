@@ -4,7 +4,7 @@ import { NombaService } from "./nomba.service";
 
 export class CheckoutService {
   static async createSession(payload: CreateCheckoutSessionRequest, customerEmail: string) {
-    const { storeId, items } = payload;
+    const { storeId, items, discount = 0, customerName, paymentMethod = "transfer" } = payload;
     
     // 1. Fetch products to calculate total and verify stock
     const productIds = items.map(i => i.productId);
@@ -18,7 +18,7 @@ export class CheckoutService {
       throw new Error("Failed to fetch products or products not found");
     }
 
-    let totalAmount = 0;
+    let subtotal = 0;
     const invoiceItemsData = [];
 
     for (const item of items) {
@@ -29,7 +29,7 @@ export class CheckoutService {
         throw new Error(`Insufficient stock for product: ${product.name}`);
       }
 
-      totalAmount += product.price * item.quantity;
+      subtotal += product.price * item.quantity;
       
       invoiceItemsData.push({
         product_id: product.id,
@@ -39,14 +39,18 @@ export class CheckoutService {
       });
     }
 
+    const totalAmount = Math.max(0, subtotal - discount);
+
     // 2. Create invoice
     const { data: invoice, error: invoiceError } = await supabaseAdmin
       .from("invoices")
       .insert({
         store_id: storeId,
-        subtotal: totalAmount,
+        subtotal: subtotal,
+        discount: discount,
         total_amount: totalAmount,
-        payment_method: "transfer", // default for Nomba checkout, updated in webhook if card
+        payment_method: paymentMethod, // e.g. "transfer" or "card"
+        customer_name: customerName,
         status: "pending",
       })
       .select()

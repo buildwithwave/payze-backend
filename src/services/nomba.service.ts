@@ -4,6 +4,26 @@ import { supabaseAdmin } from "../lib/supabase";
 
 export class NombaService {
   private static cachedToken: { token: string; expiresAt: number } | null = null;
+  private static fallbackBanks = [
+    { name: "Access Bank", code: "044" },
+    { name: "Fidelity Bank", code: "070" },
+    { name: "First Bank of Nigeria", code: "011" },
+    { name: "First City Monument Bank", code: "214" },
+    { name: "Guaranty Trust Bank", code: "058" },
+    { name: "Keystone Bank", code: "082" },
+    { name: "Kuda Microfinance Bank", code: "50211" },
+    { name: "Moniepoint Microfinance Bank", code: "50515" },
+    { name: "Opay Digital Services", code: "999992" },
+    { name: "PalmPay", code: "999991" },
+    { name: "Polaris Bank", code: "076" },
+    { name: "Nomba Sandbox Test Bank", code: "053" },
+    { name: "Stanbic IBTC Bank", code: "221" },
+    { name: "Sterling Bank", code: "232" },
+    { name: "Union Bank of Nigeria", code: "032" },
+    { name: "United Bank for Africa", code: "033" },
+    { name: "Wema Bank", code: "035" },
+    { name: "Zenith Bank", code: "057" },
+  ];
 
   private static async getAccessToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAt) {
@@ -60,14 +80,7 @@ export class NombaService {
 
   private static async request(path: string, options: { method?: string; body?: unknown } = {}): Promise<any> {
     const token = await this.getAccessToken();
-    const hasQuery = path.includes("?");
-    const url = `${env.NOMBA_BASE_URL}${path}${hasQuery ? "&" : "?"}accountId=${env.NOMBA_SUB_ACCOUNT_ID}`;
-    
-    console.log(`\n[NombaService] API Request: ${options.method ?? "GET"} ${url}`);
-    if (options.body) {
-      console.log(`[NombaService] API Request Body:`, JSON.stringify(options.body, null, 2));
-    }
-
+    const url = `${env.NOMBA_BASE_URL}${path}`;
     const response = await fetch(url, {
       method: options.method ?? "GET",
       headers: {
@@ -90,7 +103,10 @@ export class NombaService {
 
     if (!response.ok) {
       const message = payload?.description || payload?.message || `Nomba request failed (${response.status})`;
-      console.error(`Nomba ${options.method ?? "GET"} ${path} failed:`, text);
+      console.error(`Nomba ${options.method ?? "GET"} ${url} failed:`, {
+        body: options.body,
+        response: text,
+      });
       throw new Error(message);
     }
 
@@ -98,20 +114,36 @@ export class NombaService {
   }
 
   static async listBanks(): Promise<Array<{ name: string; code: string }>> {
-    const payload = await this.request("/transfers/banks");
-    const raw = Array.isArray(payload?.data) ? payload.data : payload?.data?.banks ?? [];
-    return raw.map((b: any) => ({
-      name: b.name ?? b.bankName,
-      code: String(b.code ?? b.bankCode),
-    }));
+    try {
+      const payload = await this.request("/transfers/banks");
+      const raw = Array.isArray(payload?.data) ? payload.data : payload?.data?.banks ?? [];
+      const banks = raw
+        .map((b: any) => ({
+          name: b.name ?? b.bankName,
+          code: String(b.code ?? b.bankCode ?? ""),
+        }))
+        .filter((b: { name?: string; code?: string }) => b.name && b.code);
+
+      return banks.length > 0 ? banks : this.fallbackBanks;
+    } catch (err) {
+      console.warn("Nomba bank list unavailable; using fallback banks:", err instanceof Error ? err.message : err);
+      return this.fallbackBanks;
+    }
   }
 
   static async lookupAccount(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
+    const body = { accountNumber: accountNumber.trim(), bankCode: bankCode.trim() };
     const payload = await this.request("/transfers/bank/lookup", {
       method: "POST",
-      body: { accountNumber, bankCode },
+      body,
     });
-    const accountName = payload?.data?.accountName ?? payload?.data?.account_name;
+    const accountName =
+      payload?.data?.accountName ??
+      payload?.data?.account_name ??
+      payload?.data?.bankAccountName ??
+      payload?.data?.bank_account_name ??
+      payload?.data?.account?.accountName ??
+      payload?.data?.account?.account_name;
     if (!accountName) throw new Error("Could not resolve account name");
     return { accountName };
   }

@@ -19,8 +19,6 @@ export class StoreService {
 
     if (error) throw new AppError(error.message);
 
-    // Provision virtual account immediately in the background or awaited.
-    // getOrCreateVirtualAccount handles its own errors silently.
     await WalletService.getOrCreateVirtualAccount(data);
 
     return data;
@@ -82,5 +80,15 @@ export class StoreService {
     if (error) throw new AppError(error.message);
     if (!data) throw new AppError("Store not found", StatusCodes.NOT_FOUND);
     return data;
+  }
+
+  static async listPublicStores(): Promise<Array<{ id: string; name: string }>> {
+    const { data, error } = await supabaseAdmin
+      .from("stores")
+      .select("id, name")
+      .order("name", { ascending: true });
+
+    if (error) throw new AppError(error.message);
+    return data || [];
   }
 }

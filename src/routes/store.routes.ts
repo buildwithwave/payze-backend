@@ -4,6 +4,18 @@ import { requireAuth } from "../middlewares/auth.middleware";
 
 const router: Router = Router();
 
+/**
+ * @swagger
+ * /stores/public:
+ *   get:
+ *     tags: [Stores]
+ *     summary: List all stores publicly
+ *     responses:
+ *       200:
+ *         description: List of public stores
+ */
+router.get("/public", StoreController.listPublicStores);
+
 router.use(requireAuth);
 
 /**

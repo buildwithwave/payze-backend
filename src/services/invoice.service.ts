@@ -4,6 +4,10 @@ import { Invoice, InvoiceItem, PaginatedResponse } from "../types";
 import { AppError } from "../utils/appError";
 import { Pagination } from "../utils/pagination";
 import { serializeInvoice } from "../utils/serializers";
+import { EmailService } from "./email.service";
+import { WhatsAppService } from "./whatsapp.service";
+import { generateInvoicePdfBuffer } from "../utils/pdfGenerator";
+import { env } from "../config/env";
 
 export class InvoiceService {
   static async listInvoices(
@@ -63,4 +67,82 @@ export class InvoiceService {
 
     return serializeInvoice(data, data.invoice_items ?? []);
   }
+
+  /** Public lookup by invoice number — no auth required */
+  static async lookupByNumber(code: string, storeId: string) {
+    const { data, error } = await supabaseAdmin
+      .from("invoices")
+      .select("*, invoice_items(*), stores!inner(name)")
+      .eq("number", code.toUpperCase().trim())
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    if (error) throw new AppError(error.message);
+    if (!data) throw new AppError("Invoice not found", StatusCodes.NOT_FOUND);
+
+    return {
+      ...serializeInvoice(data, data.invoice_items ?? []),
+      storeName: (data as any).stores?.name ?? "Payze Store",
+    };
+  }
+
+  /** Send receipt to customer via email or WhatsApp */
+  static async sendReceipt(
+    userId: string,
+    invoiceId: string,
+    channel: "email" | "whatsapp",
+    destination: string
+  ) {
+    // Verify ownership
+    const { data, error } = await supabaseAdmin
+      .from("invoices")
+      .select("*, invoice_items(*), stores!inner(user_id, name)")
+      .eq("id", invoiceId)
+      .eq("stores.user_id", userId)
+      .maybeSingle();
+
+    if (error) throw new AppError(error.message);
+    if (!data) throw new AppError("Invoice not found", StatusCodes.NOT_FOUND);
+
+    const invoice = serializeInvoice(data, data.invoice_items ?? []);
+    const storeName = (data as any).stores?.name ?? "Payze Store";
+    const receiptUrl = `${env.FRONTEND_URL}/receipt`;
+
+    if (channel === "email") {
+      await EmailService.sendReceipt({
+        to: destination,
+        storeName,
+        invoiceNumber: invoice.number || invoice.id,
+        receiptUrl,
+        total: invoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 }),
+        items: invoice.items.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price * i.quantity,
+        })),
+      });
+      return { sent: true, channel: "email" };
+    }
+
+    if (channel === "whatsapp") {
+      try {
+        const pdfBuffer = await generateInvoicePdfBuffer(invoice, storeName);
+        const filename = `Receipt-${invoice.number || invoice.id}.pdf`;
+        
+        // 1. Upload to WhatsApp Media API
+        const mediaId = await WhatsAppService.uploadMedia(pdfBuffer, filename);
+        
+        // 2. Send the document message
+        const caption = `Here's your receipt from ${storeName}!\n\nInvoice: ${invoice.number || invoice.id}\nTotal: ₦${invoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}\n\nView online at ${receiptUrl} using your invoice number.`;
+        await WhatsAppService.sendDocument(destination, mediaId, caption, filename);
+
+        return { sent: true, channel: "whatsapp" };
+      } catch (err: any) {
+        throw new AppError("Failed to deliver WhatsApp message. Please check the number and try again.", StatusCodes.BAD_REQUEST);
+      }
+    }
+
+    throw new AppError("Invalid channel", StatusCodes.BAD_REQUEST);
+  }
 }
+

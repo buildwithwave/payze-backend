@@ -11,7 +11,7 @@ export class InvoiceController {
 
     const result = await InvoiceService.listInvoices(
       storeId,
-      (req.query.search as string) || undefined,
+      req.query.search as string,
       getPagination(req)
     );
     res.status(StatusCodes.OK).json(result);
@@ -20,5 +20,37 @@ export class InvoiceController {
   static async getInvoice(req: Request, res: Response) {
     const invoice = await InvoiceService.getInvoice(req.user.id, req.params.id as string);
     res.status(StatusCodes.OK).json(invoice);
+  }
+
+  /** Public — no auth */
+  static async lookupByNumber(req: Request, res: Response) {
+    const code = req.params.code as string;
+    const storeId = req.query.storeId as string;
+    
+    if (!storeId) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "storeId query parameter is required" });
+    }
+
+    const invoice = await InvoiceService.lookupByNumber(code, storeId);
+    res.status(StatusCodes.OK).json(invoice);
+  }
+
+  /** Send receipt to customer */
+  static async sendReceipt(req: Request, res: Response) {
+    const { channel, destination } = req.body;
+    if (!["email", "whatsapp"].includes(channel)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "channel must be 'email' or 'whatsapp'" });
+    }
+    if (!destination || typeof destination !== "string" || !destination.trim()) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "destination is required" });
+    }
+
+    const result = await InvoiceService.sendReceipt(
+      req.user.id,
+      req.params.id as string,
+      channel,
+      destination.trim()
+    );
+    res.status(StatusCodes.OK).json(result);
   }
 }

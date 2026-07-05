@@ -4,6 +4,26 @@ import { requireAuth } from "../middlewares/auth.middleware";
 
 const router: Router = Router();
 
+/**
+ * @swagger
+ * /invoices/lookup/{code}:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: Public lookup — fetch an invoice by its number (e.g. INV-2507-0001)
+ *     parameters:
+ *       - in: path
+ *         name: code
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Invoice details + store name
+ *       404:
+ *         description: Invoice not found
+ */
+router.get("/lookup/:code", InvoiceController.lookupByNumber);
+
+// All routes below require auth
 router.use(requireAuth);
 
 /**
@@ -55,5 +75,38 @@ router.get("/", InvoiceController.listInvoices);
  *         description: Invoice not found
  */
 router.get("/:id", InvoiceController.getInvoice);
+
+/**
+ * @swagger
+ * /invoices/{id}/send-receipt:
+ *   post:
+ *     tags: [Invoices]
+ *     summary: Send receipt to customer via email or WhatsApp
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [channel, destination]
+ *             properties:
+ *               channel:
+ *                 type: string
+ *                 enum: [email, whatsapp]
+ *               destination:
+ *                 type: string
+ *                 description: Email address or phone number
+ *     responses:
+ *       200:
+ *         description: Receipt sent
+ */
+router.post("/:id/send-receipt", InvoiceController.sendReceipt);
 
 export default router;

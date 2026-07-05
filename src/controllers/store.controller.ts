@@ -27,4 +27,9 @@ export class StoreController {
     const store = await StoreService.updateStore(req.user.id, id as string, name);
     res.status(StatusCodes.OK).json(serializeStore(store));
   }
+
+  static async listPublicStores(req: Request, res: Response) {
+    const stores = await StoreService.listPublicStores();
+    res.status(StatusCodes.OK).json(stores);
+  }
 }

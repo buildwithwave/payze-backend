@@ -269,21 +269,23 @@ export class NombaService {
       })
       .eq("id", payment.id);
 
+    const method = String(order.paymentMethod ?? "").toLowerCase();
+    const paymentMethod = method.includes("card") ? "card" : "transfer";
+
     // 5. Update invoice status
     const { data: paidInvoice } = await supabaseAdmin
       .from("invoices")
-      .update({ status: "paid" })
+      .update({ status: "paid", payment_method: paymentMethod })
       .eq("id", invoiceId)
       .select("id, store_id, total_amount")
       .single();
 
     // 5.1 Record the credit in the wallet ledger (idempotent via unique reference)
     if (paidInvoice) {
-      const method = String(order.paymentMethod ?? "").toLowerCase();
       await supabaseAdmin.from("transactions").insert({
         store_id: paidInvoice.store_id,
         type: "credit",
-        channel: method.includes("card") ? "card" : "transfer",
+        channel: paymentMethod,
         amount: paidInvoice.total_amount,
         reference: transaction.transactionId,
         counterparty: payload.data?.customer?.senderName ?? null,

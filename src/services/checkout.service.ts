@@ -33,6 +33,7 @@ export class CheckoutService {
       
       invoiceItemsData.push({
         product_id: product.id,
+        name: product.name,
         quantity: item.quantity,
         price: product.price, // snapshot price
       });
@@ -43,7 +44,9 @@ export class CheckoutService {
       .from("invoices")
       .insert({
         store_id: storeId,
+        subtotal: totalAmount,
         total_amount: totalAmount,
+        payment_method: "transfer", // default for Nomba checkout, updated in webhook if card
         status: "pending",
       })
       .select()

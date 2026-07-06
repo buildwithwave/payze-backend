@@ -42,6 +42,26 @@ export class AuthController {
 
     const user = data.user;
 
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (signInError) {
+      return res.status(StatusCodes.CREATED).json({
+        message: "User registered successfully",
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.user_metadata?.first_name,
+          lastName: user.user_metadata?.last_name,
+          businessName: user.user_metadata?.business_name,
+          phone: user.user_metadata?.phone,
+          createdAt: user.created_at,
+        },
+      });
+    }
+
     res.status(StatusCodes.CREATED).json({
       message: "User registered successfully",
       user: {
@@ -53,6 +73,7 @@ export class AuthController {
         phone: user.user_metadata?.phone,
         createdAt: user.created_at,
       },
+      session: signInData.session,
     });
   }
 

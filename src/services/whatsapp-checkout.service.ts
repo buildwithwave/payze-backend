@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { TwilioService } from "./twilio.service";
 import { NombaService } from "./nomba.service";
+import { env } from "../config/env";
 
 interface CartItem {
   productId: string;
@@ -299,12 +300,24 @@ export class WhatsAppCheckoutService {
 
     for (const url of mediaUrls) {
       try {
-        const response = await fetch(url);
-        if (!response.ok) continue;
+        const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64");
+        const response = await fetch(url, {
+          headers: {
+            "Authorization": `Basic ${auth}`
+          }
+        });
+
+        if (!response.ok) {
+          console.error(`[WhatsAppCheckout] Failed to fetch media from Twilio. Status: ${response.status}`);
+          continue;
+        }
+
         const arrayBuffer = await response.arrayBuffer();
         
         const blob = new Blob([arrayBuffer], { type: response.headers.get("content-type") || "image/jpeg" });
-        const results = await readBarcodesFromImageFile(blob);
+        const results = await readBarcodesFromImageFile(blob, {
+          tryHarder: true
+        });
         
         for (const result of results) {
           if (result.text) barcodes.push(result.text);

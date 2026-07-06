@@ -9,18 +9,21 @@ export class WhatsAppCheckoutController {
   static async incoming(req: Request, res: Response): Promise<void> {
     try {
       const { Body, From } = req.body;
+      const numMedia = parseInt(req.body.NumMedia || "0", 10);
 
-      if (!From || !Body) {
-        console.warn("[WhatsApp] Missing From or Body in incoming webhook");
+      // If there's no From address, or no body AND no media, ignore it
+      if (!From || (typeof Body !== "string" && numMedia === 0)) {
+        console.warn("[WhatsApp] Missing From, or both Body and Media in incoming webhook");
         res.status(200).send("<Response></Response>");
         return;
       }
+
+      const textBody = Body || "";
 
       // Strip "whatsapp:" prefix to normalize, then pass raw phone
       const phone = From.replace("whatsapp:", "");
 
       // Extract media URLs (Twilio passes NumMedia, MediaUrl0, MediaUrl1...)
-      const numMedia = parseInt(req.body.NumMedia || "0", 10);
       const mediaUrls: string[] = [];
       for (let i = 0; i < numMedia; i++) {
         if (req.body[`MediaUrl${i}`]) {
@@ -28,11 +31,11 @@ export class WhatsAppCheckoutController {
         }
       }
 
-      console.log(`[WhatsApp] Incoming from ${phone}: "${Body}" with ${mediaUrls.length} media item(s)`);
+      console.log(`[WhatsApp] Incoming from ${phone}: "${textBody}" with ${mediaUrls.length} media item(s)`);
 
       // Process asynchronously — respond to Twilio immediately
       // so we don't hit their 15-second timeout
-      WhatsAppCheckoutService.handleIncomingMessage(phone, Body, mediaUrls).catch(
+      WhatsAppCheckoutService.handleIncomingMessage(phone, textBody, mediaUrls).catch(
         (err) => {
           console.error("[WhatsApp] Error handling message:", err);
         },

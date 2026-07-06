@@ -11,9 +11,11 @@ export class StoreService {
       throw new AppError("Store name is required", StatusCodes.BAD_REQUEST);
     }
 
+    const storeCode = this.generateStoreCode(name.trim());
+
     const { data, error } = await supabaseAdmin
       .from("stores")
-      .insert({ user_id: userId, name: name.trim() })
+      .insert({ user_id: userId, name: name.trim(), store_code: storeCode })
       .select()
       .single();
 
@@ -22,6 +24,21 @@ export class StoreService {
     await WalletService.getOrCreateVirtualAccount(data);
 
     return data;
+  }
+
+  /**
+   * Generate a short, human-friendly store code from the store name.
+   * Format: first 3 uppercase letters + "-" + 4 random hex chars.
+   * Example: "Super Mart" → "SUP-a3f1"
+   */
+  private static generateStoreCode(name: string): string {
+    const prefix = name
+      .replace(/[^a-zA-Z]/g, "")
+      .substring(0, 3)
+      .toUpperCase()
+      .padEnd(3, "X");
+    const suffix = Math.random().toString(16).substring(2, 6);
+    return `${prefix}-${suffix}`;
   }
 
   static async listStores(userId: string): Promise<Store[]> {
@@ -82,13 +99,24 @@ export class StoreService {
     return data;
   }
 
-  static async listPublicStores(): Promise<Array<{ id: string; name: string }>> {
+  static async listPublicStores(): Promise<Array<{ id: string; name: string; store_code: string }>> {
     const { data, error } = await supabaseAdmin
       .from("stores")
-      .select("id, name")
+      .select("id, name, store_code")
       .order("name", { ascending: true });
 
     if (error) throw new AppError(error.message);
     return data || [];
+  }
+
+  static async findByStoreCode(code: string): Promise<Store | null> {
+    const { data, error } = await supabaseAdmin
+      .from("stores")
+      .select()
+      .eq("store_code", code.toUpperCase())
+      .maybeSingle();
+
+    if (error) throw new AppError(error.message);
+    return data;
   }
 }

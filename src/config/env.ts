@@ -30,4 +30,8 @@ export const env = {
 
   WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || "",
   WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+
+  TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || "",
+  TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || "",
+  TWILIO_WHATSAPP_NUMBER: process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886",
 } as const;

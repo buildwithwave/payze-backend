@@ -532,5 +532,14 @@ export class NombaService {
       receiptId: receipt?.id,
       receiptNumber: receipt?.receipt_number,
     });
+
+    // 7. Notify WhatsApp customer (if this was a WhatsApp checkout)
+    try {
+      const { WhatsAppCheckoutService } = await import("./whatsapp-checkout.service");
+      await WhatsAppCheckoutService.handlePaymentConfirmation(invoiceId);
+    } catch (waErr) {
+      // Non-critical — don't fail the webhook if WhatsApp notification fails
+      console.warn("[NombaWebhook] WhatsApp notification failed (non-critical):", waErr);
+    }
   }
 }

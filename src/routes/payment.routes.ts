@@ -37,6 +37,21 @@ router.post("/webhook", PaymentController.webhook);
 
 /**
  * @swagger
+ * /payments/webhook:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Webhook verification
+ *     description: Some services send a GET request to verify the webhook URL exists
+ *     responses:
+ *       200:
+ *         description: Webhook is active
+ */
+router.get("/webhook", (req, res) => {
+  res.status(200).send("Webhook active");
+});
+
+/**
+ * @swagger
  * /payments/{id}:
  *   get:
  *     tags: [Payments]

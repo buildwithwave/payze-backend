@@ -29,7 +29,7 @@ export class StoreService {
   /**
    * Generate a short, human-friendly store code from the store name.
    * Format: first 3 uppercase letters + "-" + 4 random hex chars.
-   * Example: "Super Mart" → "SUP-a3f1"
+   * Example: "Super Mart" → "SUP-A3F1"
    */
   private static generateStoreCode(name: string): string {
     const prefix = name
@@ -37,7 +37,7 @@ export class StoreService {
       .substring(0, 3)
       .toUpperCase()
       .padEnd(3, "X");
-    const suffix = Math.random().toString(16).substring(2, 6);
+    const suffix = Math.random().toString(16).substring(2, 6).toUpperCase();
     return `${prefix}-${suffix}`;
   }
 

@@ -43,6 +43,7 @@ export class WhatsAppCheckoutService {
   static async handleIncomingMessage(
     from: string,
     body: string,
+    mediaUrls: string[] = []
   ): Promise<void> {
     const text = body.trim();
     const session = await this.getOrCreateSession(from);
@@ -65,7 +66,7 @@ export class WhatsAppCheckoutService {
         await this.handleStoreCode(session, text);
         break;
       case "scanning_items":
-        await this.handleScanningItems(session, text);
+        await this.handleScanningItems(session, text, mediaUrls);
         break;
       case "reviewing_cart":
         await this.handleReviewingCart(session, text);
@@ -120,6 +121,7 @@ export class WhatsAppCheckoutService {
   private static async handleScanningItems(
     session: Session,
     text: string,
+    mediaUrls: string[]
   ): Promise<void> {
     const upper = text.toUpperCase();
 
@@ -127,7 +129,7 @@ export class WhatsAppCheckoutService {
       if (session.cart.length === 0) {
         await TwilioService.sendWhatsAppMessage(
           session.phone_number,
-          `${EMOJIS.warning} Your cart is empty! Add at least one item before checking out.\n\nScan a barcode or type a product name.`,
+          `${EMOJIS.warning} Your cart is empty! Add at least one item before checking out.\n\nScan a barcode, send a photo, or type a product name.`,
         );
         return;
       }
@@ -158,47 +160,81 @@ export class WhatsAppCheckoutService {
       return;
     }
 
-    // Try to find the product — first by exact barcode, then by name search
-    const product = await this.findProduct(session.store_id!, text);
+    const queries: string[] = [];
+    if (text) {
+      // Allow passing multiple items via comma or newline
+      const parts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
+      queries.push(...parts);
+    }
 
-    if (!product) {
-      await TwilioService.sendWhatsAppMessage(
-        session.phone_number,
-        `${EMOJIS.x} No product found for "${text}".\n\nTry the exact barcode number or product name. Type *CART* to see your current items.`,
+    if (mediaUrls.length > 0) {
+      const extractedBarcodes = await this.extractBarcodesFromMedia(mediaUrls);
+      queries.push(...extractedBarcodes);
+
+      if (extractedBarcodes.length === 0 && text.trim() === "") {
+        await TwilioService.sendWhatsAppMessage(
+          session.phone_number,
+          `${EMOJIS.x} Could not detect any barcode in the image. Please try a clearer photo or type the barcode/product name.`
+        );
+        return;
+      }
+    }
+
+    if (queries.length === 0) return;
+
+    const addedProducts: any[] = [];
+    const notFoundQueries: string[] = [];
+
+    for (const query of queries) {
+      const product = await this.findProduct(session.store_id!, query);
+
+      if (!product) {
+        notFoundQueries.push(query);
+        continue;
+      }
+
+      const existingIdx = session.cart.findIndex(
+        (item) => item.productId === product.id,
       );
-      return;
+      if (existingIdx >= 0) {
+        session.cart[existingIdx].quantity += 1;
+      } else {
+        session.cart.push({
+          productId: product.id,
+          name: product.name,
+          quantity: 1,
+          price: product.price,
+        });
+      }
+      addedProducts.push(product);
     }
 
-    // Check if already in cart — increment quantity
-    const existingIdx = session.cart.findIndex(
-      (item) => item.productId === product.id,
-    );
-    if (existingIdx >= 0) {
-      session.cart[existingIdx].quantity += 1;
-    } else {
-      session.cart.push({
-        productId: product.id,
-        name: product.name,
-        quantity: 1,
-        price: product.price,
-      });
+    if (addedProducts.length > 0) {
+      await this.updateSession(session.id, { cart: session.cart });
     }
 
-    await this.updateSession(session.id, { cart: session.cart });
+    let responseMsg = "";
+    
+    // Group added products to display summary neatly
+    const groupedAdds = addedProducts.reduce((acc: any, p: any) => {
+      acc[p.id] = (acc[p.id] || 0) + 1;
+      return acc;
+    }, {});
 
-    const itemInCart =
-      session.cart.find((i) => i.productId === product.id)!;
-    const cartTotal = session.cart.reduce(
-      (sum, i) => sum + i.price * i.quantity,
-      0,
-    );
+    for (const [pId, qty] of Object.entries(groupedAdds)) {
+      const itemInCart = session.cart.find((i) => i.productId === pId)!;
+      responseMsg += `${EMOJIS.plus} *${itemInCart.name}* (+${qty}) — ₦${(itemInCart.price * itemInCart.quantity).toLocaleString()}\n`;
+    }
 
-    await TwilioService.sendWhatsAppMessage(
-      session.phone_number,
-      `${EMOJIS.plus} *${product.name}* × ${itemInCart.quantity} — ₦${(itemInCart.price * itemInCart.quantity).toLocaleString()}\n\n` +
-        `Cart: ${session.cart.length} item(s) · ₦${cartTotal.toLocaleString()}\n\n` +
-        `Scan more items or type *DONE* to checkout.`,
-    );
+    if (notFoundQueries.length > 0) {
+      responseMsg += `\n${EMOJIS.x} Not found: ${notFoundQueries.join(", ")}\n`;
+    }
+
+    if (addedProducts.length > 0 || notFoundQueries.length > 0) {
+      const cartTotal = session.cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      responseMsg += `\nCart: ${session.cart.length} item(s) · ₦${cartTotal.toLocaleString()}\n\nScan more items or type *DONE* to checkout.`;
+      await TwilioService.sendWhatsAppMessage(session.phone_number, responseMsg.trim());
+    }
   }
 
   private static async handleReviewingCart(
@@ -252,7 +288,33 @@ export class WhatsAppCheckoutService {
     );
   }
 
-  // ─── Product Search ──────────────────────────────────────
+  // ─── Product Search & Image Decoding ────────────────────
+
+  private static async extractBarcodesFromMedia(mediaUrls: string[]): Promise<string[]> {
+    if (mediaUrls.length === 0) return [];
+    const barcodes: string[] = [];
+
+    // Lazy load to keep start time fast and avoid unused overhead
+    const { readBarcodesFromImageFile } = await import("zxing-wasm/reader");
+
+    for (const url of mediaUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        
+        const blob = new Blob([arrayBuffer], { type: response.headers.get("content-type") || "image/jpeg" });
+        const results = await readBarcodesFromImageFile(blob);
+        
+        for (const result of results) {
+          if (result.text) barcodes.push(result.text);
+        }
+      } catch (err) {
+        console.error("[WhatsAppCheckout] Failed to process media barcode:", err);
+      }
+    }
+    return barcodes;
+  }
 
   private static async findProduct(
     storeId: string,

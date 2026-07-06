@@ -19,11 +19,20 @@ export class WhatsAppCheckoutController {
       // Strip "whatsapp:" prefix to normalize, then pass raw phone
       const phone = From.replace("whatsapp:", "");
 
-      console.log(`[WhatsApp] Incoming from ${phone}: "${Body}"`);
+      // Extract media URLs (Twilio passes NumMedia, MediaUrl0, MediaUrl1...)
+      const numMedia = parseInt(req.body.NumMedia || "0", 10);
+      const mediaUrls: string[] = [];
+      for (let i = 0; i < numMedia; i++) {
+        if (req.body[`MediaUrl${i}`]) {
+          mediaUrls.push(req.body[`MediaUrl${i}`]);
+        }
+      }
+
+      console.log(`[WhatsApp] Incoming from ${phone}: "${Body}" with ${mediaUrls.length} media item(s)`);
 
       // Process asynchronously — respond to Twilio immediately
       // so we don't hit their 15-second timeout
-      WhatsAppCheckoutService.handleIncomingMessage(phone, Body).catch(
+      WhatsAppCheckoutService.handleIncomingMessage(phone, Body, mediaUrls).catch(
         (err) => {
           console.error("[WhatsApp] Error handling message:", err);
         },

@@ -58,7 +58,6 @@ export class NombaService {
 
     const text = await response.text();
     console.log(`[NombaService] Auth Response Status: ${response.status}`);
-    console.log(`[NombaService] Auth Response Body: ${text}`);
 
     if (!response.ok) {
       console.error("[NombaService] Auth failed:", text, "URL:", url);
@@ -71,6 +70,15 @@ export class NombaService {
     } catch (e) {
       throw new Error("Failed to parse Nomba auth response");
     }
+    console.log("[NombaService] Auth Response Body:", {
+      code: data?.code,
+      description: data?.description,
+      status: data?.status,
+      businessId: data?.data?.businessId,
+      expiresAt: data?.data?.expiresAt,
+      hasAccessToken: Boolean(data?.data?.access_token),
+      hasRefreshToken: Boolean(data?.data?.refresh_token),
+    });
 
     // Tokens last ~30 min; refresh 1 min early. Fall back to 25 min if unspecified.
     const expiresAtMs = Date.parse(data.data?.expiresAt ?? "") || Date.now() + 26 * 60 * 1000;
@@ -187,18 +195,31 @@ export class NombaService {
     };
   }
 
-  static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{ checkoutLink: string; orderReference: string }> {
-    const orderReference = `pz_${invoiceId}`;
+  static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{
+    checkoutLink: string;
+    orderReference: string;
+    merchantOrderReference: string;
+    providerOrderReference: string | null;
+  }> {
+    const merchantOrderReference = `pz_${invoiceId}`;
+    const callbackUrl = `${env.APP_BASE_URL}/api/payments/webhook`;
+
+    console.log("[NombaService] Creating checkout order", {
+      invoiceId,
+      merchantOrderReference,
+      amount,
+      callbackUrl,
+    });
 
     const payload = await this.request("/checkout/order", {
       method: "POST",
       body: {
         order: {
-          orderReference,
+          orderReference: merchantOrderReference,
           amount: amount.toString(),
           currency: "NGN",
           customerEmail,
-          callbackUrl: `${env.APP_BASE_URL}/api/payments/webhook`,
+          callbackUrl,
         },
       },
     });
@@ -208,9 +229,19 @@ export class NombaService {
       throw new Error(`Invalid response format from Nomba: ${JSON.stringify(payload)}`);
     }
 
+    const providerOrderReference = payload.data.orderReference ?? null;
+    console.log("[NombaService] Checkout order created", {
+      invoiceId,
+      merchantOrderReference,
+      providerOrderReference,
+      checkoutLink: payload.data.checkoutLink ? "[present]" : "[missing]",
+    });
+
     return {
       checkoutLink: payload.data.checkoutLink,
-      orderReference: payload.data.orderReference,
+      orderReference: providerOrderReference ?? merchantOrderReference,
+      merchantOrderReference,
+      providerOrderReference,
     };
   }
 
@@ -249,10 +280,24 @@ export class NombaService {
   }
 
   static async handleWebhook(payload: any, headers?: any): Promise<void> {
+    const logContext = {
+      eventType: payload?.event_type,
+      requestId: payload?.requestId,
+      orderReference: payload?.data?.order?.orderReference,
+      transactionId: payload?.data?.transaction?.transactionId,
+    };
+
+    console.log("[NombaWebhook] Handling webhook", logContext);
+
     // 0. Verify webhook signature
     if (headers) {
       const signatureValue = headers["nomba-signature"] || headers["nomba-sig-value"];
       const nombaTimeStamp = headers["nomba-timestamp"];
+      console.log("[NombaWebhook] Signature headers", {
+        ...logContext,
+        hasSignature: Boolean(signatureValue),
+        hasTimestamp: Boolean(nombaTimeStamp),
+      });
       
       if (signatureValue && nombaTimeStamp) {
         // Fallback to client secret if webhook secret isn't set, as some accounts might use it
@@ -260,49 +305,113 @@ export class NombaService {
         const mySig = this.generateSignature(payload, secret, nombaTimeStamp);
         
         if (mySig.toLowerCase() !== signatureValue.toLowerCase()) {
-          console.warn("Webhook signature mismatch!", { expected: signatureValue, generated: mySig });
+          console.warn("[NombaWebhook] Signature mismatch", logContext);
           throw new Error("Invalid webhook signature");
         }
+        console.log("[NombaWebhook] Signature verified", logContext);
       } else {
-        console.warn("Missing webhook signature headers. Proceeding without verification.");
+        console.warn("[NombaWebhook] Missing signature headers. Proceeding without verification.", logContext);
       }
     }
 
     // 1. Verify webhook structure
-    if (payload.event_type !== "payment_success") return;
+    if (payload.event_type !== "payment_success") {
+      console.log("[NombaWebhook] Ignoring unsupported event type", logContext);
+      return;
+    }
 
     const transaction = payload.data?.transaction;
     const order = payload.data?.order;
 
-    if (!transaction || !order) return;
+    if (!transaction || !order) {
+      console.warn("[NombaWebhook] Missing transaction or order data", {
+        ...logContext,
+        hasTransaction: Boolean(transaction),
+        hasOrder: Boolean(order),
+      });
+      return;
+    }
 
-    // 2. The orderReference contains the invoiceId "pz_<invoiceId>"
-    const refParts = order.orderReference.split("_");
-    if (refParts.length < 2) return;
-    const invoiceId = refParts[1];
+    // 2. Resolve the invoice. Nomba may return our merchant reference
+    // (`pz_<invoiceId>`) or its own provider order reference UUID.
+    let invoiceId: string | null = null;
+    let payment: any = null;
+    const refParts = String(order.orderReference ?? "").split("_");
+
+    if (refParts[0] === "pz" && refParts.length >= 2) {
+      invoiceId = refParts.slice(1).join("_");
+    } else {
+      const { data: paymentByProviderRef, error: providerRefLookupError } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("provider_reference", order.orderReference)
+        .maybeSingle();
+
+      if (providerRefLookupError) {
+        console.warn("[NombaWebhook] Provider order reference lookup failed", {
+          ...logContext,
+          error: providerRefLookupError.message,
+        });
+      }
+
+      if (paymentByProviderRef) {
+        payment = paymentByProviderRef;
+        invoiceId = paymentByProviderRef.invoice_id;
+      }
+    }
+
+    if (!invoiceId) {
+      console.warn("[NombaWebhook] Could not resolve invoice from order reference", logContext);
+      return;
+    }
+    const merchantOrderReference = `pz_${invoiceId}`;
+    console.log("[NombaWebhook] Resolved invoice", { ...logContext, invoiceId, merchantOrderReference });
 
     // 3. Optional: Verify with Nomba to be safe (Server-to-Server verification)
     const isVerified = await this.verifyPayment(transaction.transactionId);
     if (!isVerified) {
-      console.warn("Webhook received but verification failed for", transaction.transactionId);
+      console.warn("[NombaWebhook] Server-to-server verification failed", { ...logContext, invoiceId });
       return;
     }
+    console.log("[NombaWebhook] Server-to-server verification passed", { ...logContext, invoiceId });
 
     // 4. Find payment record and update status
-    const { data: payment } = await supabaseAdmin
-      .from("payments")
-      .select("*")
-      .eq("invoice_id", invoiceId)
-      .single();
+    let paymentLookupError: any = null;
+    if (!payment) {
+      const paymentLookup = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("invoice_id", invoiceId)
+        .single();
+      payment = paymentLookup.data;
+      paymentLookupError = paymentLookup.error;
+    }
 
-    if (!payment) return;
+    if (paymentLookupError || !payment) {
+      console.warn("[NombaWebhook] Payment record not found", {
+        ...logContext,
+        invoiceId,
+        error: paymentLookupError?.message,
+      });
+      return;
+    }
+    console.log("[NombaWebhook] Payment record found", {
+      ...logContext,
+      invoiceId,
+      paymentId: payment.id,
+      paymentStatus: payment.status,
+    });
 
     if (payment.status === "successful") {
-      console.log(`Payment for invoice ${invoiceId} is already marked as successful. Ignoring duplicate webhook.`);
+      console.log("[NombaWebhook] Payment already successful. Ignoring duplicate webhook.", {
+        ...logContext,
+        invoiceId,
+        paymentId: payment.id,
+      });
       return;
     }
 
-    await supabaseAdmin
+    const { error: paymentUpdateError } = await supabaseAdmin
       .from("payments")
       .update({
         status: "successful",
@@ -310,52 +419,118 @@ export class NombaService {
       })
       .eq("id", payment.id);
 
+    if (paymentUpdateError) throw new Error(`Failed to update payment: ${paymentUpdateError.message}`);
+    console.log("[NombaWebhook] Payment marked successful", {
+      ...logContext,
+      invoiceId,
+      paymentId: payment.id,
+    });
+
     const paymentMethod = "nomba";
+    const transactionChannel = "transfer";
 
     // 5. Update invoice status
-    const { data: paidInvoice } = await supabaseAdmin
+    const { data: paidInvoice, error: invoiceUpdateError } = await supabaseAdmin
       .from("invoices")
       .update({ status: "paid", payment_method: paymentMethod })
       .eq("id", invoiceId)
       .select("id, store_id, total_amount")
       .single();
 
-    // 5.1 Record the credit in the wallet ledger (idempotent via unique reference)
+    if (invoiceUpdateError) throw new Error(`Failed to update invoice: ${invoiceUpdateError.message}`);
+    console.log("[NombaWebhook] Invoice marked paid", {
+      ...logContext,
+      invoiceId,
+      storeId: paidInvoice?.store_id,
+      amount: paidInvoice?.total_amount,
+    });
+
+    // 5.1 Mark the pending wallet transaction successful. Older payments may not
+    // have one yet, so insert a successful credit as a fallback.
     if (paidInvoice) {
-      await supabaseAdmin.from("transactions").insert({
-        store_id: paidInvoice.store_id,
-        type: "credit",
-        channel: paymentMethod,
-        amount: paidInvoice.total_amount,
-        reference: transaction.transactionId,
-        counterparty: payload.data?.customer?.senderName ?? null,
-        status: "successful",
-      });
-    }
+      const { data: existingTransaction } = await supabaseAdmin
+        .from("transactions")
+        .select("id")
+        .in("reference", [...new Set([order.orderReference, merchantOrderReference].filter(Boolean))])
+        .limit(1)
+        .maybeSingle();
 
-    // 5.5 Decrement stock quantities for purchased items
-    const { data: invoiceItems } = await supabaseAdmin
-      .from("invoice_items")
-      .select("product_id, quantity")
-      .eq("invoice_id", invoiceId);
-
-    if (invoiceItems && invoiceItems.length > 0) {
-      for (const item of invoiceItems) {
-        await supabaseAdmin.rpc("decrement_stock", {
-          p_id: item.product_id,
-          q_subtract: item.quantity,
+      if (existingTransaction) {
+        const { error: transactionUpdateError } = await supabaseAdmin
+          .from("transactions")
+          .update({
+            status: "successful",
+            counterparty: payload.data?.customer?.senderName ?? null,
+          })
+          .eq("id", existingTransaction.id);
+        if (transactionUpdateError) {
+          throw new Error(`Failed to update transaction: ${transactionUpdateError.message}`);
+        }
+        console.log("[NombaWebhook] Pending transaction marked successful", {
+          ...logContext,
+          invoiceId,
+          transactionRowId: existingTransaction.id,
+        });
+      } else {
+        const { data: insertedTransaction, error: transactionInsertError } = await supabaseAdmin.from("transactions").insert({
+          store_id: paidInvoice.store_id,
+          type: "credit",
+          channel: transactionChannel,
+          amount: paidInvoice.total_amount,
+          reference: transaction.transactionId,
+          counterparty: payload.data?.customer?.senderName ?? null,
+          status: "successful",
+        }).select("id").single();
+        if (transactionInsertError) {
+          throw new Error(`Failed to insert fallback transaction: ${transactionInsertError.message}`);
+        }
+        console.log("[NombaWebhook] Fallback transaction inserted", {
+          ...logContext,
+          invoiceId,
+          transactionRowId: insertedTransaction?.id,
         });
       }
     }
 
+    // 5.5 Decrement stock quantities for purchased items
+    const { data: invoiceItems, error: invoiceItemsError } = await supabaseAdmin
+      .from("invoice_items")
+      .select("product_id, quantity")
+      .eq("invoice_id", invoiceId);
+
+    if (invoiceItemsError) throw new Error(`Failed to fetch invoice items: ${invoiceItemsError.message}`);
+    if (invoiceItems && invoiceItems.length > 0) {
+      for (const item of invoiceItems) {
+        const { error: stockError } = await supabaseAdmin.rpc("decrement_stock", {
+          p_id: item.product_id,
+          q_subtract: item.quantity,
+        });
+        if (stockError) throw new Error(`Failed to decrement stock: ${stockError.message}`);
+      }
+    }
+    console.log("[NombaWebhook] Stock decrement complete", {
+      ...logContext,
+      invoiceId,
+      itemCount: invoiceItems?.length ?? 0,
+    });
+
     // 6. Create receipt
     const receiptNumber = `REC-${Date.now().toString().slice(-6)}`;
-    await supabaseAdmin
+    const { data: receipt, error: receiptError } = await supabaseAdmin
       .from("receipts")
       .insert({
         invoice_id: invoiceId,
         payment_id: payment.id,
         receipt_number: receiptNumber,
-      });
+      })
+      .select("id, receipt_number")
+      .single();
+    if (receiptError) throw new Error(`Failed to create receipt: ${receiptError.message}`);
+    console.log("[NombaWebhook] Receipt created", {
+      ...logContext,
+      invoiceId,
+      receiptId: receipt?.id,
+      receiptNumber: receipt?.receipt_number,
+    });
   }
 }

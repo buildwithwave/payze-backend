@@ -48,7 +48,7 @@ export interface Transaction {
   id: string;
   store_id: string;
   type: 'credit' | 'debit';
-  channel: 'nomba' | 'withdrawal';
+  channel: 'transfer' | 'card' | 'withdrawal';
   amount: number;
   reference: string;
   counterparty: string | null;

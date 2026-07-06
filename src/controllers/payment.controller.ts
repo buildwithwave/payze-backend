@@ -5,11 +5,32 @@ import { supabaseAdmin } from "../lib/supabase";
 
 export class PaymentController {
   static async webhook(req: Request, res: Response) {
+    const signatureValue = req.headers["nomba-signature"] || req.headers["nomba-sig-value"];
+    console.log("[PaymentWebhook] Incoming webhook", {
+      eventType: req.body?.event_type,
+      requestId: req.body?.requestId,
+      orderReference: req.body?.data?.order?.orderReference,
+      transactionId: req.body?.data?.transaction?.transactionId,
+      hasSignature: Boolean(signatureValue),
+      hasTimestamp: Boolean(req.headers["nomba-timestamp"]),
+      userAgent: req.headers["user-agent"],
+    });
+
     try {
       await NombaService.handleWebhook(req.body, req.headers);
+      console.log("[PaymentWebhook] Webhook handled", {
+        eventType: req.body?.event_type,
+        orderReference: req.body?.data?.order?.orderReference,
+        transactionId: req.body?.data?.transaction?.transactionId,
+      });
       res.status(StatusCodes.OK).send("OK");
     } catch (error) {
-      console.error("Webhook error:", error);
+      console.error("[PaymentWebhook] Webhook error:", {
+        message: error instanceof Error ? error.message : error,
+        eventType: req.body?.event_type,
+        orderReference: req.body?.data?.order?.orderReference,
+        transactionId: req.body?.data?.transaction?.transactionId,
+      });
       res.status(StatusCodes.INTERNAL_SERVER_ERROR).send("Webhook Error");
     }
   }

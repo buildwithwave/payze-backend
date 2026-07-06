@@ -137,7 +137,7 @@ CREATE OR REPLACE FUNCTION public.pos_checkout(
   p_store_id UUID,
   p_items JSONB,               -- [{ "productId": UUID, "quantity": INT }]
   p_discount NUMERIC,
-  p_payment_method TEXT,       -- 'cash' | 'transfer' | 'card'
+  p_payment_method TEXT,       -- 'cash' | 'nomba'
   p_amount_tendered NUMERIC,   -- required for cash
   p_customer_name TEXT
 ) RETURNS JSONB AS $$
@@ -239,8 +239,8 @@ BEGIN
   FROM jsonb_array_elements(p_items) elem
   JOIN public.products p ON p.id = (elem->>'productId')::UUID;
 
-  -- Transfer/card sales land in the wallet ledger
-  IF p_payment_method IN ('transfer', 'card') THEN
+  -- Nomba sales land in the wallet ledger
+  IF p_payment_method = 'nomba' THEN
     INSERT INTO public.transactions
       (store_id, type, channel, amount, reference, counterparty, status)
     VALUES

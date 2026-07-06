@@ -6,12 +6,12 @@ export interface CheckoutRequest {
   storeId: string;
   items: Array<{ productId: string; quantity: number }>;
   discount?: number;
-  paymentMethod: "cash" | "transfer" | "card";
+  paymentMethod: "cash" | "nomba";
   amountTendered?: number;
   customerName?: string;
 }
 
-const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
+const PAYMENT_METHODS = ["cash", "nomba"] as const;
 
 // Custom SQLSTATEs raised by the pos_checkout function
 const PG_BAD_REQUEST = "P0400";
@@ -25,7 +25,7 @@ export class SalesService {
       throw new AppError("Cart is empty", StatusCodes.BAD_REQUEST);
     }
     if (!PAYMENT_METHODS.includes(paymentMethod)) {
-      throw new AppError("Payment method must be cash, transfer or card", StatusCodes.BAD_REQUEST);
+      throw new AppError("Payment method must be cash or nomba", StatusCodes.BAD_REQUEST);
     }
     if (discount !== undefined && (typeof discount !== "number" || discount < 0)) {
       throw new AppError("Discount must be 0 or more", StatusCodes.BAD_REQUEST);

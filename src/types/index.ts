@@ -28,7 +28,7 @@ export interface Invoice {
   discount: number;
   total_amount: number;
   status: 'pending' | 'paid' | 'failed';
-  payment_method: 'cash' | 'transfer' | 'card' | null;
+  payment_method: 'cash' | 'nomba' | null;
   amount_tendered: number | null;
   change: number | null;
   customer_name: string | null;
@@ -48,7 +48,7 @@ export interface Transaction {
   id: string;
   store_id: string;
   type: 'credit' | 'debit';
-  channel: 'transfer' | 'card' | 'withdrawal';
+  channel: 'nomba' | 'withdrawal';
   amount: number;
   reference: string;
   counterparty: string | null;
@@ -102,7 +102,7 @@ export interface CreateCheckoutSessionRequest {
   }>;
   discount?: number;
   customerName?: string;
-  paymentMethod?: "card" | "transfer";
+  paymentMethod?: "nomba";
 }
 
 export interface NombaWebhookPayload {

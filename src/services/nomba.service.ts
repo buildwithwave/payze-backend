@@ -11,6 +11,18 @@ export class NombaService {
     }
 
     const url = `${env.NOMBA_BASE_URL}/auth/token/issue`;
+    console.log(`\n[NombaService] Requesting access token...`);
+    console.log(`[NombaService] URL: ${url}`);
+    console.log(`[NombaService] Headers:`, {
+      "Content-Type": "application/json",
+      "accountId": env.NOMBA_ACCOUNT_ID,
+    });
+    console.log(`[NombaService] Body:`, {
+      grant_type: "client_credentials",
+      client_id: env.NOMBA_CLIENT_ID,
+      client_secret: "***" + env.NOMBA_CLIENT_SECRET.slice(-4),
+    });
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -24,20 +36,39 @@ export class NombaService {
       }),
     });
 
+    const text = await response.text();
+    console.log(`[NombaService] Auth Response Status: ${response.status}`);
+    console.log(`[NombaService] Auth Response Body: ${text}`);
+
     if (!response.ok) {
+      console.error("[NombaService] Auth failed:", text, "URL:", url);
       throw new Error("Failed to get Nomba access token");
     }
 
-    const data = (await response.json()) as any;
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error("Failed to parse Nomba auth response");
+    }
+
     // Tokens last ~30 min; refresh 1 min early. Fall back to 25 min if unspecified.
-    const expiresAtMs = Date.parse(data.data.expiresAt ?? "") || Date.now() + 26 * 60 * 1000;
+    const expiresAtMs = Date.parse(data.data?.expiresAt ?? "") || Date.now() + 26 * 60 * 1000;
     this.cachedToken = { token: data.data.access_token, expiresAt: expiresAtMs - 60 * 1000 };
     return data.data.access_token;
   }
 
   private static async request(path: string, options: { method?: string; body?: unknown } = {}): Promise<any> {
     const token = await this.getAccessToken();
-    const response = await fetch(`${env.NOMBA_BASE_URL}${path}`, {
+    const hasQuery = path.includes("?");
+    const url = `${env.NOMBA_BASE_URL}${path}${hasQuery ? "&" : "?"}accountId=${env.NOMBA_SUB_ACCOUNT_ID}`;
+    
+    console.log(`\n[NombaService] API Request: ${options.method ?? "GET"} ${url}`);
+    if (options.body) {
+      console.log(`[NombaService] API Request Body:`, JSON.stringify(options.body, null, 2));
+    }
+
+    const response = await fetch(url, {
       method: options.method ?? "GET",
       headers: {
         "Authorization": `Bearer ${token}`,
@@ -48,6 +79,8 @@ export class NombaService {
     });
 
     const text = await response.text();
+    console.log(`[NombaService] API Response Status: ${response.status}`);
+    console.log(`[NombaService] API Response Body: ${text}`);
     let payload: any = null;
     try {
       payload = text ? JSON.parse(text) : null;
@@ -113,7 +146,6 @@ export class NombaService {
       body: { accountRef, accountName, currency: "NGN" },
     });
     const d = payload?.data ?? {};
-    // Nomba nests the assigned number differently across API versions — check the known spots
     const bank = Array.isArray(d.banks) && d.banks.length > 0 ? d.banks[0] : null;
     return {
       accountNumber: d.bankAccountNumber ?? d.accountNumber ?? bank?.accountNumber ?? null,
@@ -124,18 +156,11 @@ export class NombaService {
   }
 
   static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{ checkoutLink: string; orderReference: string }> {
-    const token = await this.getAccessToken();
     const orderReference = `pz_${invoiceId}`;
 
-    const url = `${env.NOMBA_BASE_URL}/checkout/order`;
-    const response = await fetch(url, {
+    const payload = await this.request("/checkout/order", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "accountId": env.NOMBA_ACCOUNT_ID,
-      },
-      body: JSON.stringify({
+      body: {
         order: {
           orderReference,
           amount: amount.toString(),
@@ -143,43 +168,27 @@ export class NombaService {
           customerEmail,
           callbackUrl: `${env.APP_BASE_URL}/api/payments/webhook`,
         },
-      }),
+      },
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Nomba create payment error:", errText);
-      throw new Error("Failed to create Nomba payment");
-    }
-
-    const data = (await response.json()) as any;
-    if (!data || !data.data) {
-      console.error("Unexpected Nomba response:", data);
-      throw new Error(`Invalid response format from Nomba: ${JSON.stringify(data)}`);
+    if (!payload || !payload.data) {
+      console.error("Unexpected Nomba response:", payload);
+      throw new Error(`Invalid response format from Nomba: ${JSON.stringify(payload)}`);
     }
 
     return {
-      checkoutLink: data.data.checkoutLink,
-      orderReference: data.data.orderReference,
+      checkoutLink: payload.data.checkoutLink,
+      orderReference: payload.data.orderReference,
     };
   }
 
   static async verifyPayment(transactionRef: string): Promise<boolean> {
-    const token = await this.getAccessToken();
-    
-    const url = `${env.NOMBA_BASE_URL}/transactions/accounts/single?transactionRef=${transactionRef}`;
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "accountId": env.NOMBA_ACCOUNT_ID,
-      },
-    });
-
-    if (!response.ok) return false;
-
-    const data = (await response.json()) as any;
-    return data.data?.status === "SUCCESS";
+    try {
+      const payload = await this.request(`/transactions/accounts/single?transactionRef=${transactionRef}`);
+      return payload?.data?.status === "SUCCESS";
+    } catch (e) {
+      return false;
+    }
   }
 
   static generateSignature(payload: any, secret: string, timeStamp: string): string {
@@ -269,8 +278,7 @@ export class NombaService {
       })
       .eq("id", payment.id);
 
-    const method = String(order.paymentMethod ?? "").toLowerCase();
-    const paymentMethod = method.includes("card") ? "card" : "transfer";
+    const paymentMethod = "nomba";
 
     // 5. Update invoice status
     const { data: paidInvoice } = await supabaseAdmin

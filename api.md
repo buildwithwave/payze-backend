@@ -186,7 +186,7 @@ POST `/uploads` (multipart) → `{ "url": "https://..." }`, then the URL goes in
 
 ## 7. Point of Sale + Invoices (`/dashboard/pos`, `/dashboard/invoices`)
 
-**UI flow:** cashier builds a cart (tap or barcode scan) → optional customer name + discount → picks payment method (cash / transfer / card) → for cash, enters amount received and we show change → sale completes → printable receipt. Invoices page lists every past sale and re-opens receipts.
+**UI flow:** cashier builds a cart (tap or barcode scan) → optional customer name + discount → picks payment method (cash / nomba) → for cash, enters amount received and we show change → sale completes → printable receipt. Invoices page lists every past sale and re-opens receipts.
 
 ### POST `/sales/checkout`
 The critical endpoint. Must be **atomic**: validate stock, decrement stock, create invoice, all-or-nothing.
@@ -199,7 +199,7 @@ Request:
     { "productId": "…", "quantity": 2 }
   ],
   "discount": 500,
-  "paymentMethod": "cash",          // "cash" | "transfer" | "card"
+  "paymentMethod": "cash",          // "cash" | "nomba"
   "amountTendered": 5000,           // required when paymentMethod = "cash"
   "customerName": "Ada"             // optional
 }
@@ -215,7 +215,7 @@ interface Invoice {
   subtotal: number;
   discount: number;
   total: number;             // subtotal - discount, floor 0
-  paymentMethod: "cash" | "transfer" | "card";
+  paymentMethod: "cash" | "nomba";
   amountTendered?: number;   // cash only
   change?: number;           // cash only: amountTendered - total
   customerName?: string;
@@ -254,7 +254,7 @@ Page not built yet — this is the planned shape so it can be designed together.
 interface Transaction {
   id: string;
   type: "credit" | "debit";
-  channel: "transfer" | "card" | "withdrawal";
+  channel: "nomba" | "withdrawal";
   amount: number;
   reference: string;
   counterparty?: string;     // payer name / destination account

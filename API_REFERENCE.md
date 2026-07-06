@@ -267,7 +267,7 @@ interface Invoice {
   subtotal: number;
   discount: number;
   total: number; // subtotal - discount, floor 0
-  paymentMethod: "cash" | "transfer" | "card";
+  paymentMethod: "cash" | "nomba";
   amountTendered?: number; // cash only (null/omitted otherwise)
   change?: number; // cash only: amountTendered - total
   customerName?: string;
@@ -292,7 +292,7 @@ Atomic: validates stock, decrements it, numbers and creates the invoice — all-
   storeId: string;
   items: { productId: string; quantity: number }[];  // quantity ≥ 1
   discount?: number;                                  // ≥ 0, default 0
-  paymentMethod: "cash" | "transfer" | "card";
+  paymentMethod: "cash" | "nomba";
   amountTendered?: number;                            // required when cash
   customerName?: string;
 }
@@ -428,7 +428,7 @@ The virtual account is provisioned via Nomba on first call; if Nomba is unreacha
 interface Transaction {
   id: string;
   type: "credit" | "debit";
-  channel: "transfer" | "card" | "withdrawal";
+  channel: "nomba" | "withdrawal";
   amount: number;
   reference: string;
   counterparty?: string; // payer name / "Account Name · 0123456789"
@@ -442,7 +442,7 @@ interface Transaction {
 `type` ∈ `credit | debit` (optional). Newest first.
 → `200` `Paginated<Transaction>`
 
-Credits are created automatically by POS transfer/card sales and by Nomba webhook payments; debits by withdrawals.
+Credits are created automatically by Nomba webhook payments; debits by withdrawals.
 
 ---
 

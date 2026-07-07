@@ -278,6 +278,38 @@ export class NombaService {
     }
   }
 
+  // Mirrors the per-store sequential numbering the pos_checkout() RPC does for
+  // cash sales (stores.invoice_seq -> "INV-0001"), but as an optimistic-retry
+  // update since this path isn't behind a single atomic DB function.
+  private static async assignInvoiceNumber(storeId: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data: store, error: fetchError } = await supabaseAdmin
+        .from("stores")
+        .select("invoice_seq")
+        .eq("id", storeId)
+        .single();
+
+      if (fetchError || !store) return null;
+
+      const currentSeq = store.invoice_seq ?? 0;
+      const nextSeq = currentSeq + 1;
+
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from("stores")
+        .update({ invoice_seq: nextSeq })
+        .eq("id", storeId)
+        .eq("invoice_seq", currentSeq)
+        .select("invoice_seq")
+        .maybeSingle();
+
+      if (!updateError && updated) {
+        return `INV-${String(nextSeq).padStart(4, "0")}`;
+      }
+      // Another completion incremented the sequence first — retry.
+    }
+    return null;
+  }
+
   static async verifyPayment(transactionRef: string): Promise<boolean> {
     return this.checkTransactionStatus(`transactionRef=${encodeURIComponent(transactionRef)}`);
   }
@@ -296,6 +328,143 @@ export class NombaService {
     return true;
   }
 
+  static async handleCheckoutCallback(params: { orderId?: string; orderReference?: string }): Promise<{
+    received: true;
+    orderId?: string;
+    orderReference?: string;
+    invoiceId?: string;
+    invoiceNumber?: string;
+    storeId?: string;
+    paymentId?: string;
+    paymentStatus?: string;
+    invoiceStatus?: string;
+    nombaVerified: boolean;
+  }> {
+    const { orderId, orderReference } = params;
+    let invoiceId: string | null = null;
+    let payment: any = null;
+
+    if (orderReference?.startsWith("pz_")) {
+      const parsedInvoiceId = orderReference.slice(3);
+      if (this.isUuid(parsedInvoiceId)) {
+        invoiceId = parsedInvoiceId;
+      } else {
+        console.warn("[NombaCallback] Ignoring malformed checkout orderReference", {
+          orderId,
+          orderReference,
+        });
+      }
+    }
+
+    if (!payment && orderId) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("provider_reference", orderId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by orderId failed", {
+          orderId,
+          orderReference,
+          error: error.message,
+        });
+      }
+
+      if (data) {
+        payment = data;
+        invoiceId = data.invoice_id;
+      }
+    }
+
+    if (!payment && orderReference) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("provider_reference", orderReference)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by orderReference failed", {
+          orderId,
+          orderReference,
+          error: error.message,
+        });
+      }
+
+      if (data) {
+        payment = data;
+        invoiceId = data.invoice_id;
+      }
+    }
+
+    if (!payment && invoiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("invoice_id", invoiceId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by invoice failed", {
+          orderId,
+          orderReference,
+          invoiceId,
+          error: error.message,
+        });
+      }
+
+      if (data) payment = data;
+    }
+
+    let invoice: any = null;
+    if (invoiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("invoices")
+        .select("id, status, number, store_id")
+        .eq("id", invoiceId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Invoice lookup failed", {
+          orderId,
+          orderReference,
+          invoiceId,
+          error: error.message,
+        });
+      }
+
+      invoice = data;
+    }
+
+    // orderId isn't a transactionRef, so verifying with it directly doesn't work.
+    // Our own merchant reference is reliable once we've resolved the invoice.
+    const nombaVerified = invoiceId && payment
+      ? await this.verifyByOrderReference(`pz_${invoiceId}`, Number(payment.amount))
+      : false;
+    console.log("[NombaCallback] Resolved checkout callback", {
+      orderId,
+      orderReference,
+      invoiceId,
+      paymentId: payment?.id,
+      paymentStatus: payment?.status,
+      invoiceStatus: invoice?.status,
+      nombaVerified,
+    });
+
+    return {
+      received: true,
+      orderId,
+      orderReference,
+      invoiceId: invoiceId ?? undefined,
+      invoiceNumber: invoice?.number,
+      storeId: invoice?.store_id,
+      paymentId: payment?.id,
+      paymentStatus: payment?.status,
+      invoiceStatus: invoice?.status,
+      nombaVerified,
+    };
+  }
 
   static generateSignature(payload: any, secret: string, timeStamp: string): string {
     const data = payload.data || {};
@@ -591,7 +760,7 @@ export class NombaService {
       .from("invoices")
       .update({ status: "paid", payment_method: paymentMethod })
       .eq("id", invoiceId)
-      .select("id, store_id, total_amount")
+      .select("id, store_id, total_amount, number")
       .single();
 
     if (invoiceUpdateError) throw new Error(`Failed to update invoice: ${invoiceUpdateError.message}`);
@@ -600,6 +769,27 @@ export class NombaService {
       storeId: paidInvoice?.store_id,
       amount: paidInvoice?.total_amount,
     });
+
+    // Nomba checkouts are created without a receipt number (only the atomic
+    // POS RPC assigns one at creation) — backfill it now so the receipt
+    // lookup/QR/email flows work the same as cash sales.
+    if (paidInvoice && !paidInvoice.number) {
+      const number = await this.assignInvoiceNumber(paidInvoice.store_id);
+      if (number) {
+        const { error: numberError } = await supabaseAdmin
+          .from("invoices")
+          .update({ number })
+          .eq("id", invoiceId);
+        if (numberError) {
+          console.warn(`[${logLabel}] Failed to assign invoice number (non-critical)`, {
+            ...logContext,
+            error: numberError.message,
+          });
+        } else {
+          paidInvoice.number = number;
+        }
+      }
+    }
 
     // Mark the pending wallet transaction successful. The checkout flow creates
     // this row up front; if it is missing, fail instead of inventing ledger data.
@@ -675,4 +865,52 @@ export class NombaService {
     await this.notifyWhatsAppCheckout(invoiceId, logLabel);
   }
 
+  // Called from the payment-success page: verifies with Nomba directly (per their
+  // guidance to always verify even if a webhook was received) and completes the
+  // order if verified and not already completed. Safe to call multiple times.
+  static async verifyAndCompleteCheckout(params: { orderId?: string; orderReference?: string }): Promise<{
+    received: true;
+    orderId?: string;
+    orderReference?: string;
+    invoiceId?: string;
+    invoiceNumber?: string;
+    storeId?: string;
+    paymentId?: string;
+    paymentStatus?: string;
+    invoiceStatus?: string;
+    nombaVerified: boolean;
+    completed: boolean;
+  }> {
+    const status = await this.handleCheckoutCallback(params);
+
+    if (!status.nombaVerified || !status.invoiceId || !status.paymentId) {
+      return { ...status, completed: false };
+    }
+
+    if (status.paymentStatus === "successful" || status.invoiceStatus === "paid") {
+      await this.notifyWhatsAppCheckout(status.invoiceId, "NombaVerify");
+      return { ...status, completed: true };
+    }
+
+    const { data: payment, error } = await supabaseAdmin
+      .from("payments")
+      .select("*")
+      .eq("id", status.paymentId)
+      .single();
+
+    if (error || !payment) {
+      console.warn("[NombaVerify] Payment record vanished before completion", { ...status, error: error?.message });
+      return { ...status, completed: false };
+    }
+
+    await this.completeInvoicePayment({
+      invoiceId: status.invoiceId,
+      payment,
+      providerRef: params.orderId ?? payment.provider_reference,
+      orderReference: params.orderReference,
+      logLabel: "NombaVerify",
+    });
+
+    return { ...status, paymentStatus: "successful", invoiceStatus: "paid", completed: true };
+  }
 }

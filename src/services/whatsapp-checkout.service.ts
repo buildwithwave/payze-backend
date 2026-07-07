@@ -548,6 +548,7 @@ export class WhatsAppCheckoutService {
 
     const storeName = invoice?.stores?.name ?? "the store";
     const receiptNum = receipt?.receipt_number ?? "N/A";
+    let downloadLink = `${env.APP_BASE_URL.replace(/\/+$/, "")}${env.API_PREFIX}/invoices/${encodeURIComponent(invoiceId)}/download`;
 
     if (invoice) {
       try {
@@ -555,10 +556,12 @@ export class WhatsAppCheckoutService {
         const pdfBuffer = await generateInvoicePdfBuffer(serializedInvoice, storeName);
         const filename = `Receipt-${serializedInvoice.number || receiptNum || invoiceId}.pdf`;
         const receiptUrl = await UploadService.uploadPdf(pdfBuffer, filename);
+        downloadLink = receiptUrl;
         const caption =
           `${EMOJIS.receipt} Receipt from ${storeName}\n\n` +
           `Receipt: ${receiptNum}\n` +
-          `Total: ₦${serializedInvoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+          `Total: ₦${serializedInvoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}\n` +
+          `Download: ${downloadLink}`;
 
         await TwilioService.sendWhatsAppMediaMessage(session.phone_number, caption, receiptUrl);
         console.log("[WhatsAppCheckout] Receipt PDF sent", { invoiceId, phone: session.phone_number });
@@ -576,6 +579,7 @@ export class WhatsAppCheckoutService {
       `${EMOJIS.check} *Payment Received!*\n\n` +
         `${EMOJIS.receipt} Receipt: *${receiptNum}*\n` +
         `${EMOJIS.store} Store: ${storeName}\n\n` +
+        `Download invoice: ${downloadLink}\n\n` +
         `Thank you for shopping! ${EMOJIS.sparkle}\n\n` +
         `Type *START* to begin a new checkout.`,
     );

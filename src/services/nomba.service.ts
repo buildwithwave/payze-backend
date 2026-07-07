@@ -128,10 +128,10 @@ export class NombaService {
    */
   static async expireVirtualAccount(accountRef: string): Promise<boolean> {
     try {
-      const payload = await this.request(`/accounts/virtual/${accountRef}`, {
+      const payload = await this.request(`/accounts/virtual/${encodeURIComponent(accountRef)}`, {
         method: "DELETE",
       });
-      return payload?.data?.expired === true;
+      return Boolean(payload?.data?.expired);
     } catch (err) {
       console.warn(`[NombaService] Failed to expire virtual account ${accountRef}:`, err instanceof Error ? err.message : err);
       return false;
@@ -273,11 +273,6 @@ export class NombaService {
       accountName: d.bankAccountName ?? d.accountName ?? params.storeName,
       accountRef,
     };
-  }
-
-  private static async expireVirtualAccount(identifier: string): Promise<boolean> {
-    const payload = await this.request(`/accounts/virtual/${encodeURIComponent(identifier)}`, { method: "DELETE" });
-    return Boolean(payload?.data?.expired);
   }
 
   // Only reclaims virtual accounts belonging to invoices we know can no longer

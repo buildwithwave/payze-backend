@@ -22,6 +22,16 @@ export class InvoiceController {
     res.status(StatusCodes.OK).json(invoice);
   }
 
+  /** Public — no auth, only paid invoices */
+  static async downloadInvoice(req: Request, res: Response) {
+    const { buffer, filename } = await InvoiceService.getPublicInvoicePdf(req.params.id as string);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.status(StatusCodes.OK).send(buffer);
+  }
+
   /** Public — no auth */
   static async lookupByNumber(req: Request, res: Response) {
     const code = req.params.code as string;

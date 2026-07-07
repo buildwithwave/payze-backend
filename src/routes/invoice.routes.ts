@@ -23,6 +23,30 @@ const router: Router = Router();
  */
 router.get("/lookup/:code", InvoiceController.lookupByNumber);
 
+/**
+ * @swagger
+ * /invoices/{id}/download:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: Public download — download a paid invoice receipt PDF
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Receipt PDF
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       404:
+ *         description: Paid invoice not found
+ */
+router.get("/:id/download", InvoiceController.downloadInvoice);
+
 // All routes below require auth
 router.use(requireAuth);
 

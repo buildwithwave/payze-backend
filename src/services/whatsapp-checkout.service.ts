@@ -592,7 +592,7 @@ export class WhatsAppCheckoutService {
       code: receiptCode,
       storeId: invoice?.store_id ?? session.store_id ?? "",
     });
-    const downloadLink = `${env.FRONTEND_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
+    const downloadLink = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
 
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,

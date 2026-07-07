@@ -110,7 +110,7 @@ export class InvoiceService {
       code: invoice.number || invoice.id,
       storeId: data.store_id,
     });
-    const receiptUrl = `${env.FRONTEND_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
+    const receiptUrl = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
 
     if (channel === "email") {
       await EmailService.sendReceipt({

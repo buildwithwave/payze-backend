@@ -4,6 +4,30 @@ import { StatusCodes } from "http-status-codes";
 import { supabaseAdmin } from "../lib/supabase";
 
 export class PaymentController {
+  static async checkoutCallback(req: Request, res: Response) {
+    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : undefined;
+    const orderReference = typeof req.query.orderReference === "string" ? req.query.orderReference : undefined;
+
+    console.log("[NombaCallback] Incoming checkout callback", {
+      orderId,
+      orderReference,
+      userAgent: req.headers["user-agent"],
+    });
+
+    try {
+      const result = await NombaService.handleCheckoutCallback({ orderId, orderReference });
+      console.log("[NombaCallback] Callback handled", result);
+      res.status(StatusCodes.OK).json(result);
+    } catch (error) {
+      console.error("[NombaCallback] Callback error:", {
+        message: error instanceof Error ? error.message : error,
+        orderId,
+        orderReference,
+      });
+      res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: "Callback Error" });
+    }
+  }
+
   static async webhook(req: Request, res: Response) {
     const signatureValue = req.headers["nomba-signature"] || req.headers["nomba-sig-value"];
     console.log("[PaymentWebhook] Incoming webhook", {

@@ -202,7 +202,7 @@ export class NombaService {
     providerOrderReference: string | null;
   }> {
     const merchantOrderReference = `pz_${invoiceId}`;
-    const callbackUrl = `${env.APP_BASE_URL}/api/payments/webhook`;
+    const callbackUrl = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/payment-success`;
 
     console.log("[NombaService] Creating checkout order", {
       invoiceId,
@@ -252,6 +252,128 @@ export class NombaService {
     } catch (e) {
       return false;
     }
+  }
+
+  static async handleCheckoutCallback(params: { orderId?: string; orderReference?: string }): Promise<{
+    received: true;
+    orderId?: string;
+    orderReference?: string;
+    invoiceId?: string;
+    paymentId?: string;
+    paymentStatus?: string;
+    invoiceStatus?: string;
+    nombaVerified: boolean;
+  }> {
+    const { orderId, orderReference } = params;
+    let invoiceId: string | null = null;
+    let payment: any = null;
+
+    if (orderReference?.startsWith("pz_")) {
+      invoiceId = orderReference.slice(3);
+    }
+
+    if (!payment && orderId) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("provider_reference", orderId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by orderId failed", {
+          orderId,
+          orderReference,
+          error: error.message,
+        });
+      }
+
+      if (data) {
+        payment = data;
+        invoiceId = data.invoice_id;
+      }
+    }
+
+    if (!payment && orderReference) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("provider_reference", orderReference)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by orderReference failed", {
+          orderId,
+          orderReference,
+          error: error.message,
+        });
+      }
+
+      if (data) {
+        payment = data;
+        invoiceId = data.invoice_id;
+      }
+    }
+
+    if (!payment && invoiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("invoice_id", invoiceId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Payment lookup by invoice failed", {
+          orderId,
+          orderReference,
+          invoiceId,
+          error: error.message,
+        });
+      }
+
+      if (data) payment = data;
+    }
+
+    let invoice: any = null;
+    if (invoiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("invoices")
+        .select("id, status")
+        .eq("id", invoiceId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("[NombaCallback] Invoice lookup failed", {
+          orderId,
+          orderReference,
+          invoiceId,
+          error: error.message,
+        });
+      }
+
+      invoice = data;
+    }
+
+    const nombaVerified = orderId ? await this.verifyPayment(orderId) : false;
+    console.log("[NombaCallback] Resolved checkout callback", {
+      orderId,
+      orderReference,
+      invoiceId,
+      paymentId: payment?.id,
+      paymentStatus: payment?.status,
+      invoiceStatus: invoice?.status,
+      nombaVerified,
+    });
+
+    return {
+      received: true,
+      orderId,
+      orderReference,
+      invoiceId: invoiceId ?? undefined,
+      paymentId: payment?.id,
+      paymentStatus: payment?.status,
+      invoiceStatus: invoice?.status,
+      nombaVerified,
+    };
   }
 
   static generateSignature(payload: any, secret: string, timeStamp: string): string {

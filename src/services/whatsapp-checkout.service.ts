@@ -52,11 +52,14 @@ export class WhatsAppCheckoutService {
     mediaUrls: string[] = []
   ): Promise<void> {
     const text = body.trim();
+    console.log(`[WhatsAppService] handleIncomingMessage from: ${from}, body: "${text}", media: ${mediaUrls.length}`);
     const session = await this.getOrCreateSession(from);
+    console.log(`[WhatsAppService] Session state: ${session.step}, cart size: ${session.cart.length}`);
 
     // Global commands work in any step
     const upper = text.toUpperCase();
     if (upper === "RESTART" || upper === "RESET" || upper === "START") {
+      console.log(`[WhatsAppService] Global command matched: ${upper}`);
       await this.resetSession(session);
       await this.sendWelcome(from);
       return;
@@ -69,18 +72,23 @@ export class WhatsAppCheckoutService {
 
     switch (session.step as Step) {
       case "awaiting_store_code":
+        console.log(`[WhatsAppService] Routing to handleStoreCode for session ${session.id}`);
         await this.handleStoreCode(session, text);
         break;
       case "scanning_items":
+        console.log(`[WhatsAppService] Routing to handleScanningItems for session ${session.id}`);
         await this.handleScanningItems(session, text, mediaUrls);
         break;
       case "reviewing_cart":
+        console.log(`[WhatsAppService] Routing to handleReviewingCart for session ${session.id}`);
         await this.handleReviewingCart(session, text);
         break;
       case "awaiting_payment":
+        console.log(`[WhatsAppService] Routing to handleAwaitingPayment for session ${session.id}`);
         await this.handleAwaitingPayment(session, text);
         break;
       default:
+        console.warn(`[WhatsAppService] Unknown step: ${session.step}, resetting session.`);
         await this.resetSession(session);
         await this.sendWelcome(from);
     }
@@ -91,14 +99,20 @@ export class WhatsAppCheckoutService {
     text: string,
   ): Promise<void> {
     const code = text.toUpperCase().replace(/\s+/g, "");
+    console.log(`[WhatsAppService] Looking up store code: ${code}`);
 
-    const { data: store } = await supabaseAdmin
+    const { data: store, error } = await supabaseAdmin
       .from("stores")
       .select("id, name, store_code")
       .eq("store_code", code)
       .maybeSingle();
 
+    if (error) {
+      console.error(`[WhatsAppService] Error fetching store code ${code}:`, error);
+    }
+
     if (!store) {
+      console.log(`[WhatsAppService] Store code ${code} not found.`);
       await TwilioService.sendWhatsAppMessage(
         session.phone_number,
         `${EMOJIS.x} Store code "${code}" not found.\n\nPlease check and send a valid store code, or type HELP for assistance.`,
@@ -106,6 +120,7 @@ export class WhatsAppCheckoutService {
       return;
     }
 
+    console.log(`[WhatsAppService] Connected session ${session.id} to store ${store.id} (${store.name})`);
     await this.updateSession(session.id, {
       store_id: store.id,
       step: "scanning_items",
@@ -128,8 +143,10 @@ export class WhatsAppCheckoutService {
     mediaUrls: string[]
   ): Promise<void> {
     const upper = text.toUpperCase();
+    console.log(`[WhatsAppService] handleScanningItems text: "${upper}", media count: ${mediaUrls.length}`);
 
     if (upper === "DONE") {
+      console.log(`[WhatsAppService] DONE command received. Cart size: ${session.cart.length}`);
       if (session.cart.length === 0) {
         await TwilioService.sendWhatsAppMessage(
           session.phone_number,
@@ -155,6 +172,7 @@ export class WhatsAppCheckoutService {
     }
 
     if (upper === "CLEAR") {
+      console.log(`[WhatsAppService] CLEAR command received.`);
       await this.updateSession(session.id, { cart: [] });
       session.cart = [];
       await TwilioService.sendWhatsAppMessage(
@@ -172,10 +190,13 @@ export class WhatsAppCheckoutService {
     }
 
     if (mediaUrls.length > 0) {
+      console.log(`[WhatsAppService] Extracting barcodes from media: ${mediaUrls}`);
       const extractedBarcodes = await this.extractBarcodesFromMedia(mediaUrls);
+      console.log(`[WhatsAppService] Extracted barcodes: ${extractedBarcodes.join(", ")}`);
       queries.push(...extractedBarcodes);
 
       if (extractedBarcodes.length === 0 && text.trim() === "") {
+        console.log(`[WhatsAppService] No barcode extracted and no text provided.`);
         await TwilioService.sendWhatsAppMessage(
           session.phone_number,
           `${EMOJIS.x} Could not detect any barcode in the image. Please try a clearer photo or type the barcode/product name.`
@@ -190,12 +211,16 @@ export class WhatsAppCheckoutService {
     const notFoundQueries: string[] = [];
 
     for (const query of queries) {
+      console.log(`[WhatsAppService] Searching for product with query: "${query}" in store: ${session.store_id}`);
       const product = await this.findProduct(session.store_id!, query);
 
       if (!product) {
+        console.log(`[WhatsAppService] Product not found for query: "${query}"`);
         notFoundQueries.push(query);
         continue;
       }
+
+      console.log(`[WhatsAppService] Product found: ${product.name} (ID: ${product.id})`);
 
       const existingIdx = session.cart.findIndex(
         (item) => item.productId === product.id,
@@ -246,13 +271,16 @@ export class WhatsAppCheckoutService {
     text: string,
   ): Promise<void> {
     const upper = text.toUpperCase();
+    console.log(`[WhatsAppService] handleReviewingCart text: "${upper}"`);
 
     if (upper === "PAY") {
+      console.log(`[WhatsAppService] PAY command received.`);
       await this.createCheckoutAndPay(session);
       return;
     }
 
     if (upper === "CLEAR") {
+      console.log(`[WhatsAppService] CLEAR command received in reviewing cart.`);
       await this.updateSession(session.id, {
         step: "scanning_items",
         cart: [],
@@ -286,13 +314,16 @@ export class WhatsAppCheckoutService {
     text: string,
   ): Promise<void> {
     const upper = text.toUpperCase();
+    console.log(`[WhatsAppService] handleAwaitingPayment text: "${upper}"`);
 
     if (upper === "PAID") {
+      console.log(`[WhatsAppService] PAID command received for invoice: ${session.invoice_id}`);
       const { StoreService } = await import("./store.service");
       const { WalletService } = await import("./wallet.service");
       
       try {
         const store = await StoreService.getStoreById(session.store_id!);
+        console.log(`[WhatsAppService] Fetched store details for wallet check`);
         const walletAccount = await WalletService.getOrCreateVirtualAccount(store);
 
         if (!walletAccount || !walletAccount.account_number) {
@@ -410,7 +441,9 @@ export class WhatsAppCheckoutService {
   private static async createCheckoutAndPay(
     session: Session,
   ): Promise<void> {
+    console.log(`[WhatsAppService] Initiating checkout for session ${session.id}`);
     if (session.cart.length === 0) {
+      console.log(`[WhatsAppService] Checkout aborted: cart is empty`);
       await TwilioService.sendWhatsAppMessage(
         session.phone_number,
         `${EMOJIS.warning} Cart is empty. Nothing to pay for!`,
@@ -421,9 +454,11 @@ export class WhatsAppCheckoutService {
     const storeId = session.store_id!;
     const cart = session.cart;
     const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+    console.log(`[WhatsAppService] Cart total: ₦${total}`);
 
     try {
       // 1. Create invoice
+      console.log(`[WhatsAppService] Creating invoice in DB...`);
       const { data: invoice, error: invErr } = await supabaseAdmin
         .from("invoices")
         .insert({
@@ -449,6 +484,7 @@ export class WhatsAppCheckoutService {
         price: item.price,
       }));
 
+      console.log(`[WhatsAppService] Inserting invoice items...`);
       const { error: itemsError } = await supabaseAdmin.from("invoice_items").insert(items);
       if (itemsError) throw new Error(`Failed to insert invoice items: ${itemsError.message}`);
 
@@ -465,8 +501,10 @@ export class WhatsAppCheckoutService {
       if (!dynamicAccount.accountNumber) {
         throw new Error("Virtual account could not be created for this invoice");
       }
+      console.log(`[WhatsAppService] Dynamic VA created successfully: ${dynamicAccount.accountNumber}`);
 
       // 4. Create payment record
+      console.log(`[WhatsAppService] Creating payment record for invoice...`);
       const { error: paymentError } = await supabaseAdmin.from("payments").insert({
         invoice_id: invoice.id,
         provider: "nomba",
@@ -513,14 +551,18 @@ export class WhatsAppCheckoutService {
   // ─── Payment Confirmation (called from webhook) ─────────
 
   static async handlePaymentConfirmation(invoiceId: string): Promise<void> {
-    console.log("[WhatsAppCheckout] Handling payment confirmation", { invoiceId });
+    console.log(`[WhatsAppCheckout] Handling payment confirmation for invoice: ${invoiceId}`);
 
     // Find the WhatsApp session associated with this invoice
-    const { data: session } = await supabaseAdmin
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from("whatsapp_sessions")
       .select("*")
       .eq("invoice_id", invoiceId)
       .maybeSingle();
+
+    if (sessionError) {
+      console.error(`[WhatsAppCheckout] Error fetching session for invoice ${invoiceId}:`, sessionError);
+    }
 
     if (!session) {
       console.log("[WhatsAppCheckout] No active WhatsApp session for invoice", { invoiceId });

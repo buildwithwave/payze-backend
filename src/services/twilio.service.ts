@@ -23,11 +23,12 @@ export class TwilioService {
     const toNumber = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
     const fromNumber = env.TWILIO_WHATSAPP_NUMBER;
 
-    console.log(`[TwilioService] Sending WhatsApp to ${toNumber}`);
+    console.log(`[TwilioService] Sending WhatsApp to ${toNumber} using template`);
 
     try {
       const message = await this.client.messages.create({
-        body,
+        contentSid: "HX9f0e450b9a23ca305abefe739e538387",
+        contentVariables: JSON.stringify({ body: body }),
         from: fromNumber,
         to: toNumber,
       });

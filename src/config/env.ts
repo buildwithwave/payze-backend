@@ -16,6 +16,7 @@ export const env = {
   NOMBA_ACCOUNT_ID: process.env.NOMBA_ACCOUNT_ID || "",
   NOMBA_SUB_ACCOUNT_ID: process.env.NOMBA_SUB_ACCOUNT_ID || "",
   NOMBA_WEBHOOK_SECRET: process.env.NOMBA_WEBHOOK_SECRET || "",
+  INTERNAL_API_KEY: process.env.INTERNAL_API_KEY || "",
   NOMBA_BASE_URL: (process.env.NOMBA_BASE_URL || "https://sandbox.nomba.com")
     .replace(/\/+$/, "")
     .concat(process.env.NOMBA_BASE_URL?.endsWith("/v1") ? "" : "/v1"),

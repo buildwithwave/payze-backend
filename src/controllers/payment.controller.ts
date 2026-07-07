@@ -28,6 +28,29 @@ export class PaymentController {
     }
   }
 
+  // Called from the frontend payment-success page. Verifies the order directly
+  // with Nomba and completes it if verified — independent of whether the async
+  // webhook has (or ever will) arrive.
+  static async verify(req: Request, res: Response) {
+    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : undefined;
+    const orderReference = typeof req.query.orderReference === "string" ? req.query.orderReference : undefined;
+
+    console.log("[PaymentVerify] Verify requested", { orderId, orderReference });
+
+    try {
+      const result = await NombaService.verifyAndCompleteCheckout({ orderId, orderReference });
+      console.log("[PaymentVerify] Verify handled", result);
+      res.status(StatusCodes.OK).json(result);
+    } catch (error) {
+      console.error("[PaymentVerify] Verify error:", {
+        message: error instanceof Error ? error.message : error,
+        orderId,
+        orderReference,
+      });
+      res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: "Verification failed" });
+    }
+  }
+
   static async webhook(req: Request, res: Response) {
     const signatureValue = req.headers["nomba-signature"] || req.headers["nomba-sig-value"];
     console.log("[PaymentWebhook] Incoming webhook", {

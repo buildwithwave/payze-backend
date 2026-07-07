@@ -14,6 +14,7 @@ import bankRoutes from "./bank.routes";
 import transactionRoutes from "./transaction.routes";
 import uploadRoutes from "./upload.routes";
 import whatsappRoutes from "./whatsapp.routes";
+import internalRoutes from "./internal.routes";
 
 const router: Router = Router();
 
@@ -32,5 +33,6 @@ router.use("/banks", bankRoutes);
 router.use("/transactions", transactionRoutes);
 router.use("/uploads", uploadRoutes);
 router.use("/whatsapp", whatsappRoutes);
+router.use("/internal", internalRoutes);
 
 export default router;

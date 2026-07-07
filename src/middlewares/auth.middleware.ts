@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { supabase } from "../lib/supabase";
 import { StatusCodes } from "http-status-codes";
+import { env } from "../config/env";
 
 // Extend Express Request to hold the user
 declare global {
@@ -26,5 +27,15 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
   }
 
   req.user = user;
+  next();
+};
+
+// Gates internal/admin-only endpoints (e.g. platform-wide balance) behind a
+// shared secret instead of regular user auth, since no admin/role system exists yet.
+export const requireInternalKey = (req: Request, res: Response, next: NextFunction) => {
+  const key = req.headers["x-internal-key"];
+  if (!env.INTERNAL_API_KEY || key !== env.INTERNAL_API_KEY) {
+    return res.status(StatusCodes.UNAUTHORIZED).json({ error: "Unauthorized" });
+  }
   next();
 };

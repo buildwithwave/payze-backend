@@ -50,6 +50,26 @@ router.get("/webhook", PaymentController.checkoutCallback);
 
 /**
  * @swagger
+ * /payments/verify:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Verify and complete a checkout from the payment-success page
+ *     description: Called by the frontend after Nomba redirects the customer back. Verifies the order directly with Nomba (server-to-server) and completes it if not already done — safe to call multiple times.
+ *     parameters:
+ *       - in: query
+ *         name: orderId
+ *         schema: { type: string }
+ *       - in: query
+ *         name: orderReference
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "`{ received, invoiceId, paymentStatus, invoiceStatus, nombaVerified, completed }`"
+ */
+router.get("/verify", PaymentController.verify);
+
+/**
+ * @swagger
  * /payments/{id}:
  *   get:
  *     tags: [Payments]

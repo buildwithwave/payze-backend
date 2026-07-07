@@ -2,6 +2,9 @@ import { supabaseAdmin } from "../lib/supabase";
 import { TwilioService } from "./twilio.service";
 import { NombaService } from "./nomba.service";
 import { env } from "../config/env";
+import { generateInvoicePdfBuffer } from "../utils/pdfGenerator";
+import { serializeInvoice } from "../utils/serializers";
+import { UploadService } from "./upload.service";
 
 interface CartItem {
   productId: string;
@@ -478,22 +481,48 @@ export class WhatsAppCheckoutService {
 
     if (!session) return; // Not a WhatsApp checkout
 
-    // Get store name
-    const { data: store } = await supabaseAdmin
-      .from("stores")
-      .select("name")
-      .eq("id", session.store_id)
+    const { data: invoice, error: invoiceError } = await supabaseAdmin
+      .from("invoices")
+      .select("*, invoice_items(*), stores(name)")
+      .eq("id", invoiceId)
       .maybeSingle();
 
-    // Get receipt number
+    if (invoiceError || !invoice) {
+      console.warn("[WhatsAppCheckout] Paid invoice not found for receipt delivery", {
+        invoiceId,
+        error: invoiceError?.message,
+      });
+    }
+
     const { data: receipt } = await supabaseAdmin
       .from("receipts")
       .select("receipt_number")
       .eq("invoice_id", invoiceId)
       .maybeSingle();
 
-    const storeName = store?.name ?? "the store";
+    const storeName = invoice?.stores?.name ?? "the store";
     const receiptNum = receipt?.receipt_number ?? "N/A";
+
+    if (invoice) {
+      try {
+        const serializedInvoice = serializeInvoice(invoice, invoice.invoice_items ?? []);
+        const pdfBuffer = await generateInvoicePdfBuffer(serializedInvoice, storeName);
+        const filename = `Receipt-${serializedInvoice.number || receiptNum || invoiceId}.pdf`;
+        const receiptUrl = await UploadService.uploadPdf(pdfBuffer, filename);
+        const caption =
+          `${EMOJIS.receipt} Receipt from ${storeName}\n\n` +
+          `Receipt: ${receiptNum}\n` +
+          `Total: ₦${serializedInvoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+
+        await TwilioService.sendWhatsAppMediaMessage(session.phone_number, caption, receiptUrl);
+      } catch (err) {
+        console.warn("[WhatsAppCheckout] Receipt PDF delivery failed; sending text confirmation only", {
+          invoiceId,
+          phone: session.phone_number,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+    }
 
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,

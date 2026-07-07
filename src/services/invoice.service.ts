@@ -68,28 +68,6 @@ export class InvoiceService {
     return serializeInvoice(data, data.invoice_items ?? []);
   }
 
-  static async getPublicInvoicePdf(invoiceId: string): Promise<{ buffer: Buffer; filename: string }> {
-    const { data, error } = await supabaseAdmin
-      .from("invoices")
-      .select("*, invoice_items(*), stores!inner(name)")
-      .eq("id", invoiceId)
-      .eq("status", "paid")
-      .maybeSingle();
-
-    if (error) throw new AppError(error.message);
-    if (!data) throw new AppError("Paid invoice not found", StatusCodes.NOT_FOUND);
-
-    const invoice = serializeInvoice(data, data.invoice_items ?? []);
-    const storeName = (data as any).stores?.name ?? "Payze Store";
-    const buffer = await generateInvoicePdfBuffer(invoice, storeName);
-    const safeName = (invoice.number || invoice.id).replace(/[^a-zA-Z0-9-_]/g, "-");
-
-    return {
-      buffer,
-      filename: `Receipt-${safeName}.pdf`,
-    };
-  }
-
   /** Public lookup by invoice number — no auth required */
   static async lookupByNumber(code: string, storeId: string) {
     const { data, error } = await supabaseAdmin
@@ -128,7 +106,11 @@ export class InvoiceService {
 
     const invoice = serializeInvoice(data, data.invoice_items ?? []);
     const storeName = (data as any).stores?.name ?? "Payze Store";
-    const receiptUrl = `${env.FRONTEND_URL}/receipt`;
+    const receiptParams = new URLSearchParams({
+      code: invoice.number || invoice.id,
+      storeId: data.store_id,
+    });
+    const receiptUrl = `${env.FRONTEND_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
 
     if (channel === "email") {
       await EmailService.sendReceipt({

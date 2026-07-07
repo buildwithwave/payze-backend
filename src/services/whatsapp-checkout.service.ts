@@ -2,9 +2,6 @@ import { supabaseAdmin } from "../lib/supabase";
 import { TwilioService } from "./twilio.service";
 import { NombaService } from "./nomba.service";
 import { env } from "../config/env";
-import { generateInvoicePdfBuffer } from "../utils/pdfGenerator";
-import { serializeInvoice } from "../utils/serializers";
-import { UploadService } from "./upload.service";
 import { StoreService } from "./store.service";
 import { WalletService } from "./wallet.service";
 
@@ -590,31 +587,12 @@ export class WhatsAppCheckoutService {
 
     const storeName = invoice?.stores?.name ?? "the store";
     const receiptNum = receipt?.receipt_number ?? "N/A";
-    let downloadLink = `${env.APP_BASE_URL.replace(/\/+$/, "")}${env.API_PREFIX}/invoices/${encodeURIComponent(invoiceId)}/download`;
-
-    if (invoice) {
-      try {
-        const serializedInvoice = serializeInvoice(invoice, invoice.invoice_items ?? []);
-        const pdfBuffer = await generateInvoicePdfBuffer(serializedInvoice, storeName);
-        const filename = `Receipt-${serializedInvoice.number || receiptNum || invoiceId}.pdf`;
-        const receiptUrl = await UploadService.uploadPdf(pdfBuffer, filename);
-        downloadLink = receiptUrl;
-        const caption =
-          `${EMOJIS.receipt} Receipt from ${storeName}\n\n` +
-          `Receipt: ${receiptNum}\n` +
-          `Total: ₦${serializedInvoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}\n` +
-          `Download: ${downloadLink}`;
-
-        await TwilioService.sendWhatsAppMediaMessage(session.phone_number, caption, receiptUrl);
-        console.log("[WhatsAppCheckout] Receipt PDF sent", { invoiceId, phone: session.phone_number });
-      } catch (err) {
-        console.warn("[WhatsAppCheckout] Receipt PDF delivery failed; sending text confirmation only", {
-          invoiceId,
-          phone: session.phone_number,
-          error: err instanceof Error ? err.message : err,
-        });
-      }
-    }
+    const receiptCode = invoice?.number ?? receiptNum;
+    const receiptParams = new URLSearchParams({
+      code: receiptCode,
+      storeId: invoice?.store_id ?? session.store_id ?? "",
+    });
+    const downloadLink = `${env.FRONTEND_URL.replace(/\/+$/, "")}/receipt?${receiptParams.toString()}`;
 
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,

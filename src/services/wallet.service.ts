@@ -160,7 +160,11 @@ export class WalletService {
         narration: `Withdrawal from ${store.name}`,
       });
 
-      const status = result.status === "SUCCESS" ? "successful" : "pending";
+      // Nomba's sync transfer response can land on SUCCESS, PENDING_BILLING, NEW,
+      // or REFUND (auto-refunded = failed); REFUND is the only terminal-failure
+      // case seen synchronously — everything else settles later via the
+      // payout_success/payout_failed/payout_refund webhook (handlePayoutWebhook).
+      const status = result.status === "SUCCESS" ? "successful" : result.status === "REFUND" ? "failed" : "pending";
       const { data: updated } = await supabaseAdmin
         .from("transactions")
         .update({ status })

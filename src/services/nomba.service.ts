@@ -229,6 +229,31 @@ export class NombaService {
     accountRef: string;
   }> {
     const accountRef = `inv_${params.invoiceId}`;
+    try {
+      return await this.requestDynamicVirtualAccount(accountRef, params);
+    } catch (err) {
+      // Nomba's sandbox caps concurrent virtual accounts per account holder (currently 2)
+      // — production has no such cap. Free the oldest slot tied to an invoice we already
+      // know can no longer receive a legitimate payment (paid, or past our own 24h
+      // expiryDate window), then retry once.
+      if (err instanceof Error && /sandbox virtual accounts are allowed/i.test(err.message)) {
+        console.warn("[NombaService] Sandbox virtual account cap hit; attempting to free a slot", { accountRef });
+        const freed = await this.freeStaleSandboxVirtualAccountSlot();
+        if (freed) return await this.requestDynamicVirtualAccount(accountRef, params);
+      }
+      throw err;
+    }
+  }
+
+  private static async requestDynamicVirtualAccount(
+    accountRef: string,
+    params: { storeName: string; amount: number }
+  ): Promise<{
+    accountNumber: string | null;
+    bankName: string | null;
+    accountName: string | null;
+    accountRef: string;
+  }> {
     const payload = await this.request(`/accounts/virtual/${env.NOMBA_SUB_ACCOUNT_ID}`, {
       method: "POST",
       body: {
@@ -248,6 +273,40 @@ export class NombaService {
       accountName: d.bankAccountName ?? d.accountName ?? params.storeName,
       accountRef,
     };
+  }
+
+  private static async expireVirtualAccount(identifier: string): Promise<boolean> {
+    const payload = await this.request(`/accounts/virtual/${encodeURIComponent(identifier)}`, { method: "DELETE" });
+    return Boolean(payload?.data?.expired);
+  }
+
+  // Only reclaims virtual accounts belonging to invoices we know can no longer
+  // receive a legitimate payment — never one still awaiting a live transfer.
+  private static async freeStaleSandboxVirtualAccountSlot(): Promise<boolean> {
+    const staleCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: candidates, error } = await supabaseAdmin
+      .from("invoices")
+      .select("id")
+      .or(`status.neq.pending,created_at.lt.${staleCutoff}`)
+      .order("created_at", { ascending: true })
+      .limit(5);
+
+    if (error || !candidates?.length) return false;
+
+    for (const invoice of candidates) {
+      try {
+        if (await this.expireVirtualAccount(`inv_${invoice.id}`)) {
+          console.log("[NombaService] Freed sandbox virtual account slot", { invoiceId: invoice.id });
+          return true;
+        }
+      } catch (err) {
+        console.warn("[NombaService] Could not expire candidate virtual account, trying next", {
+          invoiceId: invoice.id,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+    }
+    return false;
   }
 
 
@@ -548,6 +607,15 @@ export class NombaService {
     }
 
     // 1. Verify webhook structure
+    if (
+      payload.event_type === "payout_success" ||
+      payload.event_type === "payout_failed" ||
+      payload.event_type === "payout_refund"
+    ) {
+      await this.handlePayoutWebhook(payload.event_type, payload.data, logContext);
+      return;
+    }
+
     if (payload.event_type !== "payment_success") {
       console.log("[NombaWebhook] Ignoring unsupported event type", logContext);
       return;
@@ -743,6 +811,77 @@ export class NombaService {
         status: "completed",
       });
     }
+  }
+
+  // Outbound transfers (WalletService.withdraw) are often ASYNC — the sync
+  // /transfers/bank response can come back NEW/PENDING_BILLING with the real
+  // outcome only known once Nomba fires this webhook. We match it back to our
+  // withdrawal transaction via merchantTxRef, which we set to our own
+  // `wd_<uuid>` reference when initiating the transfer.
+  private static async handlePayoutWebhook(eventType: string, data: any, logContext: any): Promise<void> {
+    const transaction = data?.transaction;
+    const merchantTxRef: string = transaction?.merchantTxRef ?? "";
+
+    if (!merchantTxRef) {
+      console.warn("[NombaWebhook] Payout webhook missing merchantTxRef", { ...logContext, eventType });
+      return;
+    }
+
+    const { data: txn, error } = await supabaseAdmin
+      .from("transactions")
+      .select("id, status")
+      .eq("reference", merchantTxRef)
+      .eq("channel", "withdrawal")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[NombaWebhook] Payout transaction lookup failed", {
+        ...logContext,
+        merchantTxRef,
+        error: error.message,
+      });
+      return;
+    }
+
+    if (!txn) {
+      console.warn("[NombaWebhook] No matching withdrawal transaction for payout webhook", {
+        ...logContext,
+        merchantTxRef,
+      });
+      return;
+    }
+
+    if (txn.status !== "pending") {
+      console.log("[NombaWebhook] Withdrawal already settled, ignoring duplicate payout webhook", {
+        ...logContext,
+        merchantTxRef,
+        currentStatus: txn.status,
+      });
+      return;
+    }
+
+    // payout_refund means the transfer failed and Nomba auto-refunded the funds.
+    const newStatus = eventType === "payout_success" ? "successful" : "failed";
+    const { error: updateError } = await supabaseAdmin
+      .from("transactions")
+      .update({ status: newStatus })
+      .eq("id", txn.id);
+
+    if (updateError) {
+      console.error("[NombaWebhook] Failed to update withdrawal transaction", {
+        ...logContext,
+        merchantTxRef,
+        error: updateError.message,
+      });
+      return;
+    }
+
+    console.log("[NombaWebhook] Withdrawal settled via payout webhook", {
+      ...logContext,
+      merchantTxRef,
+      providerTransactionId: transaction?.transactionId,
+      newStatus,
+    });
   }
 
   // Shared by the webhook and the success-page verify flow: marks the payment/invoice

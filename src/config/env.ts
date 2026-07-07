@@ -20,7 +20,7 @@ export const env = {
   NOMBA_BASE_URL: (process.env.NOMBA_BASE_URL || "https://sandbox.nomba.com")
     .replace(/\/+$/, "")
     .concat(process.env.NOMBA_BASE_URL?.endsWith("/v1") ? "" : "/v1"),
-  APP_BASE_URL: process.env.APP_BASE_URL || "https://aurea-nonattributive-vyingly.ngrok-free.dev",
+  APP_BASE_URL: process.env.APP_BASE_URL || "https://payze-backend-production.up.railway.app",
 
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || "",
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || "",

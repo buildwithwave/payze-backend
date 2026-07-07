@@ -81,8 +81,6 @@ export class WhatsAppCheckoutService {
     }
   }
 
-  // ─── Step Handlers ───────────────────────────────────────
-
   private static async handleStoreCode(
     session: Session,
     text: string,

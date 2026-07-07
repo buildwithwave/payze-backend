@@ -46,9 +46,7 @@ router.post("/webhook", PaymentController.webhook);
  *       200:
  *         description: Webhook is active
  */
-router.get("/webhook", (req, res) => {
-  res.status(200).send("Webhook active");
-});
+router.get("/webhook", PaymentController.checkoutCallback);
 
 /**
  * @swagger

@@ -26,6 +26,7 @@ export const env = {
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || "",
 
   RESEND_API_KEY: process.env.RESEND_API_KEY || "",
+  FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "http://localhost:3000",
   FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
 
   WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || "",

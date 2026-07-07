@@ -11,6 +11,8 @@ import routes from "./routes";
 import { errorHandler } from "./middlewares/errorHandler";
 import { notFound } from "./middlewares/notFound";
 
+import { PaymentController } from "./controllers/payment.controller";
+
 const app: express.Application = express();
 
 app.use(helmet());
@@ -20,6 +22,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// Explicit route mapping for Nomba webhook without the API prefix
+app.post("/payments/webhook", PaymentController.webhook);
 
 app.use(env.API_PREFIX, routes);
 

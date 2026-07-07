@@ -122,6 +122,22 @@ export class NombaService {
     return payload;
   }
 
+  /**
+   * Expires/Deletes a virtual account so it can no longer receive funds.
+   * This is industry standard practice after a checkout payment is completed.
+   */
+  static async expireVirtualAccount(accountRef: string): Promise<boolean> {
+    try {
+      const payload = await this.request(`/accounts/virtual/${accountRef}`, {
+        method: "DELETE",
+      });
+      return payload?.data?.expired === true;
+    } catch (err) {
+      console.warn(`[NombaService] Failed to expire virtual account ${accountRef}:`, err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
   static async listBanks(): Promise<Array<{ name: string; code: string }>> {
     try {
       const payload = await this.request("/transfers/banks");
@@ -221,7 +237,7 @@ export class NombaService {
         currency: "NGN",
         expectedAmount: params.amount,
         amount: params.amount,
-        expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        expiryDate: new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString(), // 1 hour expiry
       },
     });
     const d = payload?.data ?? {};
@@ -860,6 +876,9 @@ export class NombaService {
       receiptId: receipt?.id,
       receiptNumber: receipt?.receipt_number,
     });
+
+    // Clean up the dynamic virtual account to prevent future accidental transfers
+    await this.expireVirtualAccount(`inv_${invoiceId}`);
 
     // Notify WhatsApp customer (if this was a WhatsApp checkout)
     await this.notifyWhatsAppCheckout(invoiceId, logLabel);

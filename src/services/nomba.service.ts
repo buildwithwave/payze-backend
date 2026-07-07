@@ -182,7 +182,7 @@ export class NombaService {
     accountName: string | null;
     providerRef: string | null;
   }> {
-    const payload = await this.request("/accounts/virtual", {
+    const payload = await this.request(`/accounts/virtual/${env.NOMBA_SUB_ACCOUNT_ID}`, {
       method: "POST",
       body: { accountRef, accountName, currency: "NGN" },
     });
@@ -213,13 +213,15 @@ export class NombaService {
     accountRef: string;
   }> {
     const accountRef = `inv_${params.invoiceId}`;
-    const payload = await this.request("/accounts/virtual", {
+    const payload = await this.request(`/accounts/virtual/${env.NOMBA_SUB_ACCOUNT_ID}`, {
       method: "POST",
       body: {
         accountRef,
         accountName: params.storeName,
         currency: "NGN",
         expectedAmount: params.amount,
+        amount: params.amount,
+        expiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       },
     });
     const d = payload?.data ?? {};

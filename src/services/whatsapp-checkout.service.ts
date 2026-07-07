@@ -403,7 +403,8 @@ export class WhatsAppCheckoutService {
         price: item.price,
       }));
 
-      await supabaseAdmin.from("invoice_items").insert(items);
+      const { error: itemsError } = await supabaseAdmin.from("invoice_items").insert(items);
+      if (itemsError) throw new Error(`Failed to insert invoice items: ${itemsError.message}`);
 
       // 3. Create Nomba checkout payment
       const nombaPayment = await NombaService.createPayment(
@@ -413,20 +414,36 @@ export class WhatsAppCheckoutService {
       );
 
       // 4. Create payment record
-      await supabaseAdmin.from("payments").insert({
+      const { error: paymentError } = await supabaseAdmin.from("payments").insert({
         invoice_id: invoice.id,
         provider: "nomba",
+        provider_reference: nombaPayment.providerOrderReference,
         amount: total,
         status: "pending",
       });
+      if (paymentError) throw new Error(`Failed to create payment record: ${paymentError.message}`);
 
-      // 5. Update session
+      // 5. Create the pending wallet transaction that completion will later settle.
+      const { error: transactionError } = await supabaseAdmin
+        .from("transactions")
+        .insert({
+          store_id: storeId,
+          type: "credit",
+          channel: "transfer",
+          amount: total,
+          reference: nombaPayment.orderReference,
+          counterparty: `WhatsApp ${session.phone_number}`,
+          status: "pending",
+        });
+      if (transactionError) throw new Error(`Failed to create pending transaction: ${transactionError.message}`);
+
+      // 6. Update session
       await this.updateSession(session.id, {
         step: "awaiting_payment",
         invoice_id: invoice.id,
       });
 
-      // 6. Send payment link
+      // 7. Send payment link
       await TwilioService.sendWhatsAppMessage(
         session.phone_number,
         `${EMOJIS.pay} *Payment Summary*\n\n` +

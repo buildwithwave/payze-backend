@@ -203,7 +203,7 @@ export class NombaService {
     providerOrderReference: string | null;
   }> {
     const merchantOrderReference = `pz_${invoiceId}`;
-    const callbackUrl = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/payment-success`;
+    const callbackUrl = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/payment-success?orderReference=${encodeURIComponent(merchantOrderReference)}`;
 
     console.log("[NombaService] Creating checkout order", {
       invoiceId,

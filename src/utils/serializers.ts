@@ -7,6 +7,7 @@ const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(
 export const serializeStore = (store: Store) => ({
   id: store.id,
   name: store.name,
+  storeCode: store.store_code,
   createdAt: store.created_at,
 });
 

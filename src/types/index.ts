@@ -2,6 +2,7 @@ export interface Store {
   id: string;
   user_id: string;
   name: string;
+  store_code: string;
   created_at: string;
 }
 

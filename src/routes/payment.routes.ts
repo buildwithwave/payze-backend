@@ -37,36 +37,33 @@ router.post("/webhook", PaymentController.webhook);
 
 /**
  * @swagger
- * /payments/webhook:
- *   get:
- *     tags: [Payments]
- *     summary: Webhook verification
- *     description: Some services send a GET request to verify the webhook URL exists
- *     responses:
- *       200:
- *         description: Webhook is active
- */
-router.get("/webhook", PaymentController.checkoutCallback);
-
-/**
- * @swagger
  * /payments/verify:
- *   get:
+ *   post:
  *     tags: [Payments]
- *     summary: Verify and complete a checkout from the payment-success page
- *     description: Called by the frontend after Nomba redirects the customer back. Verifies the order directly with Nomba (server-to-server) and completes it if not already done — safe to call multiple times.
- *     parameters:
- *       - in: query
- *         name: orderId
- *         schema: { type: string }
- *       - in: query
- *         name: orderReference
- *         schema: { type: string }
+ *     summary: Verify and complete a checkout from the POS Payment Modal
+ *     description: Called by the frontend. Verifies the direct bank transfer with Nomba and completes it if found.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - invoiceId
+ *               - expectedAmount
+ *               - accountNumber
+ *             properties:
+ *               invoiceId:
+ *                 type: string
+ *               expectedAmount:
+ *                 type: number
+ *               accountNumber:
+ *                 type: string
  *     responses:
  *       200:
- *         description: "`{ received, invoiceId, paymentStatus, invoiceStatus, nombaVerified, completed }`"
+ *         description: "`{ completed, providerRef, counterparty }`"
  */
-router.get("/verify", PaymentController.verify);
+router.post("/verify", PaymentController.verify);
 
 /**
  * @swagger

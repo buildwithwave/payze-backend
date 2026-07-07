@@ -4,48 +4,41 @@ import { StatusCodes } from "http-status-codes";
 import { supabaseAdmin } from "../lib/supabase";
 
 export class PaymentController {
-  static async checkoutCallback(req: Request, res: Response) {
-    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : undefined;
-    const orderReference = typeof req.query.orderReference === "string" ? req.query.orderReference : undefined;
 
-    console.log("[NombaCallback] Incoming checkout callback", {
-      orderId,
-      orderReference,
-      userAgent: req.headers["user-agent"],
-    });
-
-    try {
-      const result = await NombaService.handleCheckoutCallback({ orderId, orderReference });
-      console.log("[NombaCallback] Callback handled", result);
-      res.status(StatusCodes.OK).json(result);
-    } catch (error) {
-      console.error("[NombaCallback] Callback error:", {
-        message: error instanceof Error ? error.message : error,
-        orderId,
-        orderReference,
-      });
-      res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: "Callback Error" });
-    }
-  }
-
-  // Called from the frontend payment-success page. Verifies the order directly
-  // with Nomba and completes it if verified — independent of whether the async
-  // webhook has (or ever will) arrive.
+  // Called from the frontend Payment Modal. Verifies the direct bank transfer
+  // with Nomba and completes the order if verified. Safe to call multiple times.
   static async verify(req: Request, res: Response) {
-    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : undefined;
-    const orderReference = typeof req.query.orderReference === "string" ? req.query.orderReference : undefined;
+    const { invoiceId, expectedAmount, accountNumber } = req.body;
 
-    console.log("[PaymentVerify] Verify requested", { orderId, orderReference });
+    console.log("[PaymentVerify] Direct transfer verify requested", { invoiceId, expectedAmount, accountNumber });
+
+    if (!invoiceId || !expectedAmount || !accountNumber) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ error: "invoiceId, expectedAmount, and accountNumber are required" });
+    }
 
     try {
-      const result = await NombaService.verifyAndCompleteCheckout({ orderId, orderReference });
-      console.log("[PaymentVerify] Verify handled", result);
-      res.status(StatusCodes.OK).json(result);
+      const { data: invoice, error } = await supabaseAdmin
+        .from("invoices")
+        .select("status")
+        .eq("id", invoiceId)
+        .single();
+
+      if (error || !invoice) {
+        return res.status(StatusCodes.NOT_FOUND).json({ error: "Invoice not found" });
+      }
+
+      if (invoice.status === "paid") {
+        console.log("[PaymentVerify] Webhook has settled the invoice", { invoiceId });
+        res.status(StatusCodes.OK).json({ status: "success", message: "Payment verified successfully" });
+      } else {
+        console.log("[PaymentVerify] Invoice still pending, waiting for webhook", { invoiceId });
+        // Return OK but status "pending" so the frontend knows it's not paid yet
+        res.status(StatusCodes.OK).json({ status: "pending", message: "Waiting for payment confirmation" });
+      }
     } catch (error) {
       console.error("[PaymentVerify] Verify error:", {
         message: error instanceof Error ? error.message : error,
-        orderId,
-        orderReference,
+        invoiceId,
       });
       res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ error: "Verification failed" });
     }

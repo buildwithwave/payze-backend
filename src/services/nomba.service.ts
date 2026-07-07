@@ -196,55 +196,42 @@ export class NombaService {
     };
   }
 
-  static async createPayment(invoiceId: string, amount: number, customerEmail: string): Promise<{
-    checkoutLink: string;
-    orderReference: string;
-    merchantOrderReference: string;
-    providerOrderReference: string | null;
+  /**
+   * Creates a **dynamic** (per-invoice) virtual account so every checkout has
+   * a dedicated bank account number. The `accountRef` is set to `inv_<invoiceId>`
+   * which Nomba echoes back as `transaction.aliasAccountReference` in the webhook,
+   * giving us a 1-to-1, secure invoice match with zero ambiguity.
+   */
+  static async createDynamicVirtualAccount(params: {
+    invoiceId: string;
+    storeName: string;
+    amount: number;
+  }): Promise<{
+    accountNumber: string | null;
+    bankName: string | null;
+    accountName: string | null;
+    accountRef: string;
   }> {
-    const merchantOrderReference = `pz_${invoiceId}`;
-    const callbackUrl = `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/payment-success?orderReference=${encodeURIComponent(merchantOrderReference)}`;
-
-    console.log("[NombaService] Creating checkout order", {
-      invoiceId,
-      merchantOrderReference,
-      amount,
-      callbackUrl,
-    });
-
-    const payload = await this.request("/checkout/order", {
+    const accountRef = `inv_${params.invoiceId}`;
+    const payload = await this.request("/accounts/virtual", {
       method: "POST",
       body: {
-        order: {
-          orderReference: merchantOrderReference,
-          amount: amount.toString(),
-          currency: "NGN",
-          customerEmail,
-          callbackUrl,
-        },
+        accountRef,
+        accountName: params.storeName,
+        currency: "NGN",
+        expectedAmount: params.amount,
       },
     });
-
-    if (!payload || !payload.data) {
-      console.error("Unexpected Nomba response:", payload);
-      throw new Error(`Invalid response format from Nomba: ${JSON.stringify(payload)}`);
-    }
-
-    const providerOrderReference = payload.data.orderReference ?? null;
-    console.log("[NombaService] Checkout order created", {
-      invoiceId,
-      merchantOrderReference,
-      providerOrderReference,
-      checkoutLink: payload.data.checkoutLink ? "[present]" : "[missing]",
-    });
-
+    const d = payload?.data ?? {};
+    const bank = Array.isArray(d.banks) && d.banks.length > 0 ? d.banks[0] : null;
     return {
-      checkoutLink: payload.data.checkoutLink,
-      orderReference: providerOrderReference ?? merchantOrderReference,
-      merchantOrderReference,
-      providerOrderReference,
+      accountNumber: d.bankAccountNumber ?? d.accountNumber ?? bank?.accountNumber ?? null,
+      bankName: d.bankName ?? bank?.bankName ?? "Nomba MFB",
+      accountName: d.bankAccountName ?? d.accountName ?? params.storeName,
+      accountRef,
     };
   }
+
 
   // Balance of the shared parent Nomba account — cumulative across every
   // store's virtual account, not a single store's balance. Admin/internal use only.
@@ -307,139 +294,6 @@ export class NombaService {
     return true;
   }
 
-  static async handleCheckoutCallback(params: { orderId?: string; orderReference?: string }): Promise<{
-    received: true;
-    orderId?: string;
-    orderReference?: string;
-    invoiceId?: string;
-    paymentId?: string;
-    paymentStatus?: string;
-    invoiceStatus?: string;
-    nombaVerified: boolean;
-  }> {
-    const { orderId, orderReference } = params;
-    let invoiceId: string | null = null;
-    let payment: any = null;
-
-    if (orderReference?.startsWith("pz_")) {
-      const parsedInvoiceId = orderReference.slice(3);
-      if (this.isUuid(parsedInvoiceId)) {
-        invoiceId = parsedInvoiceId;
-      } else {
-        console.warn("[NombaCallback] Ignoring malformed checkout orderReference", {
-          orderId,
-          orderReference,
-        });
-      }
-    }
-
-    if (!payment && orderId) {
-      const { data, error } = await supabaseAdmin
-        .from("payments")
-        .select("*")
-        .eq("provider_reference", orderId)
-        .maybeSingle();
-
-      if (error) {
-        console.warn("[NombaCallback] Payment lookup by orderId failed", {
-          orderId,
-          orderReference,
-          error: error.message,
-        });
-      }
-
-      if (data) {
-        payment = data;
-        invoiceId = data.invoice_id;
-      }
-    }
-
-    if (!payment && orderReference) {
-      const { data, error } = await supabaseAdmin
-        .from("payments")
-        .select("*")
-        .eq("provider_reference", orderReference)
-        .maybeSingle();
-
-      if (error) {
-        console.warn("[NombaCallback] Payment lookup by orderReference failed", {
-          orderId,
-          orderReference,
-          error: error.message,
-        });
-      }
-
-      if (data) {
-        payment = data;
-        invoiceId = data.invoice_id;
-      }
-    }
-
-    if (!payment && invoiceId) {
-      const { data, error } = await supabaseAdmin
-        .from("payments")
-        .select("*")
-        .eq("invoice_id", invoiceId)
-        .maybeSingle();
-
-      if (error) {
-        console.warn("[NombaCallback] Payment lookup by invoice failed", {
-          orderId,
-          orderReference,
-          invoiceId,
-          error: error.message,
-        });
-      }
-
-      if (data) payment = data;
-    }
-
-    let invoice: any = null;
-    if (invoiceId) {
-      const { data, error } = await supabaseAdmin
-        .from("invoices")
-        .select("id, status")
-        .eq("id", invoiceId)
-        .maybeSingle();
-
-      if (error) {
-        console.warn("[NombaCallback] Invoice lookup failed", {
-          orderId,
-          orderReference,
-          invoiceId,
-          error: error.message,
-        });
-      }
-
-      invoice = data;
-    }
-
-    // orderId isn't a transactionRef, so verifying with it directly doesn't work.
-    // Our own merchant reference is reliable once we've resolved the invoice.
-    const nombaVerified = invoiceId && payment
-      ? await this.verifyByOrderReference(`pz_${invoiceId}`, Number(payment.amount))
-      : false;
-    console.log("[NombaCallback] Resolved checkout callback", {
-      orderId,
-      orderReference,
-      invoiceId,
-      paymentId: payment?.id,
-      paymentStatus: payment?.status,
-      invoiceStatus: invoice?.status,
-      nombaVerified,
-    });
-
-    return {
-      received: true,
-      orderId,
-      orderReference,
-      invoiceId: invoiceId ?? undefined,
-      paymentId: payment?.id,
-      paymentStatus: payment?.status,
-      invoiceStatus: invoice?.status,
-      nombaVerified,
-    };
-  }
 
   static generateSignature(payload: any, secret: string, timeStamp: string): string {
     const data = payload.data || {};
@@ -511,16 +365,21 @@ export class NombaService {
       console.log("[NombaWebhook] Ignoring unsupported event type", logContext);
       return;
     }
-
     const transaction = payload.data?.transaction;
     const order = payload.data?.order;
 
-    if (!transaction || !order) {
-      console.warn("[NombaWebhook] Missing transaction or order data", {
-        ...logContext,
-        hasTransaction: Boolean(transaction),
-        hasOrder: Boolean(order),
-      });
+    if (!transaction) {
+      console.warn("[NombaWebhook] Missing transaction data", { ...logContext });
+      return;
+    }
+
+    if (transaction.type === "vact_transfer") {
+      await this.handleVirtualAccountTransfer(transaction, logContext);
+      return;
+    }
+
+    if (!order) {
+      console.warn("[NombaWebhook] Missing order data for non-vact_transfer", { ...logContext });
       return;
     }
 
@@ -612,6 +471,91 @@ export class NombaService {
       orderReference: order.orderReference,
       logLabel: "NombaWebhook",
     });
+  }
+
+  private static async handleVirtualAccountTransfer(transaction: any, logContext: any): Promise<void> {
+    console.log("[NombaWebhook] Handling virtual account transfer", { ...logContext, transaction });
+    
+    // The aliasAccountReference is the accountRef we set when creating the dynamic VA.
+    // For per-invoice accounts we set it to "inv_<invoiceId>".
+    const aliasRef: string = transaction.aliasAccountReference ?? "";
+    const amount = Number(transaction.transactionAmount || transaction.amount);
+    const senderName = transaction.narration || transaction.senderName || "Bank Transfer";
+
+    if (aliasRef.startsWith("inv_")) {
+      // ─── Dynamic per-invoice account ────────────────────────────────────────
+      const invoiceId = aliasRef.slice(4); // strip "inv_"
+      console.log("[NombaWebhook] Matched vact_transfer via aliasAccountReference", { ...logContext, invoiceId });
+
+      // Idempotency: skip if already paid
+      const { data: invoice } = await supabaseAdmin
+        .from("invoices")
+        .select("status")
+        .eq("id", invoiceId)
+        .maybeSingle();
+
+      if (invoice?.status === "paid") {
+        console.log("[NombaWebhook] Invoice already paid, ignoring duplicate webhook", { ...logContext, invoiceId });
+        return;
+      }
+
+      // Find or create the payment record
+      let { data: payment } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("invoice_id", invoiceId)
+        .maybeSingle();
+
+      if (!payment) {
+        const { data: newPayment } = await supabaseAdmin.from("payments").insert({
+          invoice_id: invoiceId,
+          provider: "nomba",
+          provider_reference: transaction.transactionId,
+          amount,
+          status: "pending",
+        }).select().single();
+        payment = newPayment;
+      }
+
+      if (!payment) {
+        console.warn("[NombaWebhook] Could not find or create payment record", { ...logContext, invoiceId });
+        return;
+      }
+
+      await this.completeInvoicePayment({
+        invoiceId,
+        payment,
+        providerRef: transaction.transactionId,
+        counterparty: senderName,
+        logLabel: "NombaWebhook-DynamicVA",
+      });
+    } else {
+      // ─── Static store account (untagged transfer) ───────────────────────────
+      // We don't know which invoice this belongs to. Just credit the wallet.
+      const accountNumber = transaction.aliasAccountNumber || transaction.recipientAccountNumber;
+      const { data: walletAccount } = await supabaseAdmin
+        .from("wallet_accounts")
+        .select("store_id")
+        .eq("account_number", accountNumber)
+        .maybeSingle();
+
+      if (!walletAccount) {
+        console.warn("[NombaWebhook] Store not found for static virtual account", { ...logContext, accountNumber });
+        return;
+      }
+
+      console.log("[NombaWebhook] Untagged vact_transfer — crediting wallet directly", { ...logContext, storeId: walletAccount.store_id, amount });
+
+      await supabaseAdmin.from("transactions").insert({
+        store_id: walletAccount.store_id,
+        type: "credit",
+        channel: "transfer",
+        amount,
+        reference: transaction.transactionId,
+        counterparty: senderName,
+        status: "completed",
+      });
+    }
   }
 
   // Shared by the webhook and the success-page verify flow: marks the payment/invoice
@@ -729,50 +673,4 @@ export class NombaService {
     await this.notifyWhatsAppCheckout(invoiceId, logLabel);
   }
 
-  // Called from the payment-success page: verifies with Nomba directly (per their
-  // guidance to always verify even if a webhook was received) and completes the
-  // order if verified and not already completed. Safe to call multiple times.
-  static async verifyAndCompleteCheckout(params: { orderId?: string; orderReference?: string }): Promise<{
-    received: true;
-    orderId?: string;
-    orderReference?: string;
-    invoiceId?: string;
-    paymentId?: string;
-    paymentStatus?: string;
-    invoiceStatus?: string;
-    nombaVerified: boolean;
-    completed: boolean;
-  }> {
-    const status = await this.handleCheckoutCallback(params);
-
-    if (!status.nombaVerified || !status.invoiceId || !status.paymentId) {
-      return { ...status, completed: false };
-    }
-
-    if (status.paymentStatus === "successful" || status.invoiceStatus === "paid") {
-      await this.notifyWhatsAppCheckout(status.invoiceId, "NombaVerify");
-      return { ...status, completed: true };
-    }
-
-    const { data: payment, error } = await supabaseAdmin
-      .from("payments")
-      .select("*")
-      .eq("id", status.paymentId)
-      .single();
-
-    if (error || !payment) {
-      console.warn("[NombaVerify] Payment record vanished before completion", { ...status, error: error?.message });
-      return { ...status, completed: false };
-    }
-
-    await this.completeInvoicePayment({
-      invoiceId: status.invoiceId,
-      payment,
-      providerRef: params.orderId ?? payment.provider_reference,
-      orderReference: params.orderReference,
-      logLabel: "NombaVerify",
-    });
-
-    return { ...status, paymentStatus: "successful", invoiceStatus: "paid", completed: true };
-  }
 }

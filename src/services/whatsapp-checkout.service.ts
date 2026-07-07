@@ -5,6 +5,8 @@ import { env } from "../config/env";
 import { generateInvoicePdfBuffer } from "../utils/pdfGenerator";
 import { serializeInvoice } from "../utils/serializers";
 import { UploadService } from "./upload.service";
+import { StoreService } from "./store.service";
+import { WalletService } from "./wallet.service";
 
 interface CartItem {
   productId: string;
@@ -283,10 +285,51 @@ export class WhatsAppCheckoutService {
     session: Session,
     text: string,
   ): Promise<void> {
-    // They already have a payment link. Just remind them.
+    const upper = text.toUpperCase();
+
+    if (upper === "PAID") {
+      const { StoreService } = await import("./store.service");
+      const { WalletService } = await import("./wallet.service");
+      
+      try {
+        const store = await StoreService.getStoreById(session.store_id!);
+        const walletAccount = await WalletService.getOrCreateVirtualAccount(store);
+
+        if (!walletAccount || !walletAccount.account_number) {
+          await TwilioService.sendWhatsAppMessage(session.phone_number, "Error: Virtual account not found.");
+          return;
+        }
+
+        const { data: invoice } = await supabaseAdmin.from("invoices").select("total_amount").eq("id", session.invoice_id!).single();
+        if (!invoice) return;
+
+        const { data: invoiceStatus } = await supabaseAdmin
+          .from("invoices")
+          .select("status")
+          .eq("id", session.invoice_id!)
+          .single();
+
+        if (invoiceStatus?.status === "paid") {
+          // Success message and receipt were already handled by `NombaService` calling `handlePaymentConfirmation` 
+          // during the webhook. But if the user types PAID again, we can just resend the receipt or acknowledge it.
+          await this.handlePaymentConfirmation(session.invoice_id!);
+          return;
+        }
+
+        await TwilioService.sendWhatsAppMessage(
+          session.phone_number,
+          `${EMOJIS.warning} We couldn't find your transfer yet. Bank transfers can take a few minutes to process. Please wait a moment and type *PAID* again, or check your bank app.`
+        );
+      } catch (err) {
+        console.error("[WhatsAppCheckout] PAID verification error", err);
+        await TwilioService.sendWhatsAppMessage(session.phone_number, "An error occurred while checking your payment. Please try again.");
+      }
+      return;
+    }
+
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,
-      `${EMOJIS.pay} You have a pending payment. Please complete it using the link sent earlier.\n\nType *RESTART* to start a new session.`,
+      `${EMOJIS.pay} Please transfer the funds to the provided account and type *PAID* when done.\n\nType *RESTART* to start a new session.`,
     );
   }
 
@@ -409,44 +452,37 @@ export class WhatsAppCheckoutService {
       const { error: itemsError } = await supabaseAdmin.from("invoice_items").insert(items);
       if (itemsError) throw new Error(`Failed to insert invoice items: ${itemsError.message}`);
 
-      // 3. Create Nomba checkout payment
-      const nombaPayment = await NombaService.createPayment(
-        invoice.id,
-        total,
-        `whatsapp-${session.phone_number}@payze.app`,
-      );
+      // 3. Create a per-invoice dynamic virtual account.
+      // accountRef = "inv_<invoiceId>" so the vact_transfer webhook echoes it
+      // back as aliasAccountReference for a secure, 1-to-1 invoice match.
+      const store = await StoreService.getStoreById(storeId);
+      const dynamicAccount = await NombaService.createDynamicVirtualAccount({
+        invoiceId: invoice.id,
+        storeName: store.name,
+        amount: total,
+      });
+
+      if (!dynamicAccount.accountNumber) {
+        throw new Error("Virtual account could not be created for this invoice");
+      }
 
       // 4. Create payment record
       const { error: paymentError } = await supabaseAdmin.from("payments").insert({
         invoice_id: invoice.id,
         provider: "nomba",
-        provider_reference: nombaPayment.providerOrderReference,
+        provider_reference: `transfer_${invoice.id}`,
         amount: total,
         status: "pending",
       });
       if (paymentError) throw new Error(`Failed to create payment record: ${paymentError.message}`);
 
-      // 5. Create the pending wallet transaction that completion will later settle.
-      const { error: transactionError } = await supabaseAdmin
-        .from("transactions")
-        .insert({
-          store_id: storeId,
-          type: "credit",
-          channel: "transfer",
-          amount: total,
-          reference: nombaPayment.orderReference,
-          counterparty: `WhatsApp ${session.phone_number}`,
-          status: "pending",
-        });
-      if (transactionError) throw new Error(`Failed to create pending transaction: ${transactionError.message}`);
-
-      // 6. Update session
+      // 5. Update session
       await this.updateSession(session.id, {
         step: "awaiting_payment",
         invoice_id: invoice.id,
       });
 
-      // 7. Send payment link
+      // 6. Send payment instructions with the per-invoice account details
       await TwilioService.sendWhatsAppMessage(
         session.phone_number,
         `${EMOJIS.pay} *Payment Summary*\n\n` +
@@ -457,9 +493,14 @@ export class WhatsAppCheckoutService {
             )
             .join("\n") +
           `\n\n*Total: ₦${total.toLocaleString()}*\n\n` +
-          `Pay here: ${nombaPayment.checkoutLink}\n\n` +
-          `Once payment is confirmed, you'll receive a receipt here ${EMOJIS.receipt}`,
+          `Please transfer exactly *₦${total.toLocaleString()}* to:\n\n` +
+          `🏦 Bank: *${dynamicAccount.bankName || 'Nomba MFB'}*\n` +
+          `🔢 Account Number: *${dynamicAccount.accountNumber}*\n` +
+          `👤 Account Name: *${dynamicAccount.accountName || store.name}*\n\n` +
+          `⚠️ *Important:* This account number is unique to your order. Transfer the exact amount shown.\n\n` +
+          `Once you've sent the money, type *PAID* to confirm.`,
       );
+
     } catch (err) {
       console.error("[WhatsAppCheckout] Payment creation failed:", err);
       await TwilioService.sendWhatsAppMessage(
@@ -628,7 +669,7 @@ export class WhatsAppCheckoutService {
         break;
       case "awaiting_payment":
         contextHelp =
-          "Complete your payment using the link sent.\n• *RESTART* — start a new session";
+          "Transfer the total amount to the provided bank account.\n• *PAID* — confirm you've transferred the money\n• *RESTART* — start a new session";
         break;
     }
 

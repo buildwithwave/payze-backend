@@ -279,6 +279,16 @@ export class NombaService {
     return transaction?.status === "SUCCESS";
   }
 
+  private static async notifyWhatsAppCheckout(invoiceId: string, logLabel: string): Promise<void> {
+    try {
+      const { WhatsAppCheckoutService } = await import("./whatsapp-checkout.service");
+      await WhatsAppCheckoutService.handlePaymentConfirmation(invoiceId);
+    } catch (waErr) {
+      // Non-critical — don't fail payment completion if WhatsApp notification fails.
+      console.warn(`[${logLabel}] WhatsApp notification failed (non-critical):`, waErr);
+    }
+  }
+
   static async verifyPayment(transactionRef: string): Promise<boolean> {
     return this.checkTransactionStatus(`transactionRef=${encodeURIComponent(transactionRef)}`);
   }
@@ -590,6 +600,7 @@ export class NombaService {
         invoiceId,
         paymentId: payment.id,
       });
+      await this.notifyWhatsAppCheckout(invoiceId, "NombaWebhook");
       return;
     }
 
@@ -715,13 +726,7 @@ export class NombaService {
     });
 
     // Notify WhatsApp customer (if this was a WhatsApp checkout)
-    try {
-      const { WhatsAppCheckoutService } = await import("./whatsapp-checkout.service");
-      await WhatsAppCheckoutService.handlePaymentConfirmation(invoiceId);
-    } catch (waErr) {
-      // Non-critical — don't fail the caller if WhatsApp notification fails
-      console.warn(`[${logLabel}] WhatsApp notification failed (non-critical):`, waErr);
-    }
+    await this.notifyWhatsAppCheckout(invoiceId, logLabel);
   }
 
   // Called from the payment-success page: verifies with Nomba directly (per their
@@ -745,6 +750,7 @@ export class NombaService {
     }
 
     if (status.paymentStatus === "successful" || status.invoiceStatus === "paid") {
+      await this.notifyWhatsAppCheckout(status.invoiceId, "NombaVerify");
       return { ...status, completed: true };
     }
 

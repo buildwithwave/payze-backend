@@ -472,6 +472,8 @@ export class WhatsAppCheckoutService {
   // ─── Payment Confirmation (called from webhook) ─────────
 
   static async handlePaymentConfirmation(invoiceId: string): Promise<void> {
+    console.log("[WhatsAppCheckout] Handling payment confirmation", { invoiceId });
+
     // Find the WhatsApp session associated with this invoice
     const { data: session } = await supabaseAdmin
       .from("whatsapp_sessions")
@@ -479,7 +481,10 @@ export class WhatsAppCheckoutService {
       .eq("invoice_id", invoiceId)
       .maybeSingle();
 
-    if (!session) return; // Not a WhatsApp checkout
+    if (!session) {
+      console.log("[WhatsAppCheckout] No active WhatsApp session for invoice", { invoiceId });
+      return;
+    }
 
     const { data: invoice, error: invoiceError } = await supabaseAdmin
       .from("invoices")
@@ -515,6 +520,7 @@ export class WhatsAppCheckoutService {
           `Total: ₦${serializedInvoice.total.toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
 
         await TwilioService.sendWhatsAppMediaMessage(session.phone_number, caption, receiptUrl);
+        console.log("[WhatsAppCheckout] Receipt PDF sent", { invoiceId, phone: session.phone_number });
       } catch (err) {
         console.warn("[WhatsAppCheckout] Receipt PDF delivery failed; sending text confirmation only", {
           invoiceId,
@@ -532,6 +538,7 @@ export class WhatsAppCheckoutService {
         `Thank you for shopping! ${EMOJIS.sparkle}\n\n` +
         `Type *START* to begin a new checkout.`,
     );
+    console.log("[WhatsAppCheckout] Payment confirmation text sent", { invoiceId, phone: session.phone_number });
 
     // Reset the session for next use
     await this.updateSession(session.id, {

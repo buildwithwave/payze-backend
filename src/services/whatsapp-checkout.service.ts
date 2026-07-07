@@ -586,8 +586,12 @@ export class WhatsAppCheckoutService {
       .maybeSingle();
 
     const storeName = invoice?.stores?.name ?? "the store";
-    const receiptNum = receipt?.receipt_number ?? "N/A";
-    const receiptCode = invoice?.number ?? receiptNum;
+    const receiptNum = receipt?.receipt_number;
+    if (!receiptNum) {
+      console.warn("[WhatsAppCheckout] Receipt number missing for payment confirmation", { invoiceId });
+    }
+    const receiptLine = receiptNum ? `${EMOJIS.receipt} Receipt: *${receiptNum}*\n` : "";
+    const receiptCode = invoice?.number ?? invoiceId;
     const receiptParams = new URLSearchParams({
       code: receiptCode,
       storeId: invoice?.store_id ?? session.store_id ?? "",
@@ -597,7 +601,7 @@ export class WhatsAppCheckoutService {
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,
       `${EMOJIS.check} *Payment Received!*\n\n` +
-        `${EMOJIS.receipt} Receipt: *${receiptNum}*\n` +
+        receiptLine +
         `${EMOJIS.store} Store: ${storeName}\n\n` +
         `Download invoice: ${downloadLink}\n\n` +
         `Thank you for shopping! ${EMOJIS.sparkle}\n\n` +

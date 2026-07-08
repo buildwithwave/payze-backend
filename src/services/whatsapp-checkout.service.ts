@@ -313,51 +313,40 @@ export class WhatsAppCheckoutService {
     const upper = text.toUpperCase();
     console.log(`[WhatsAppService] handleAwaitingPayment text: "${upper}"`);
 
-    if (upper === "PAID") {
-      console.log(`[WhatsAppService] PAID command received for invoice: ${session.invoice_id}`);
-      const { StoreService } = await import("./store.service");
-      const { WalletService } = await import("./wallet.service");
-      
-      try {
-        const store = await StoreService.getStoreById(session.store_id!);
-        console.log(`[WhatsAppService] Fetched store details for wallet check`);
-        const walletAccount = await WalletService.getOrCreateVirtualAccount(store);
+    // Any message while awaiting payment: check if the invoice has been paid
+    // by the webhook. "PAID" still works as a manual status check.
+    try {
+      const { data: invoiceStatus } = await supabaseAdmin
+        .from("invoices")
+        .select("status")
+        .eq("id", session.invoice_id!)
+        .single();
 
-        if (!walletAccount || !walletAccount.account_number) {
-          await TwilioService.sendWhatsAppMessage(session.phone_number, "Error: Virtual account not found.");
-          return;
-        }
-
-        const { data: invoice } = await supabaseAdmin.from("invoices").select("total_amount").eq("id", session.invoice_id!).single();
-        if (!invoice) return;
-
-        const { data: invoiceStatus } = await supabaseAdmin
-          .from("invoices")
-          .select("status")
-          .eq("id", session.invoice_id!)
-          .single();
-
-        if (invoiceStatus?.status === "paid") {
-          // Success message and receipt were already handled by `NombaService` calling `handlePaymentConfirmation` 
-          // during the webhook. But if the user types PAID again, we can just resend the receipt or acknowledge it.
-          await this.handlePaymentConfirmation(session.invoice_id!);
-          return;
-        }
-
-        await TwilioService.sendWhatsAppMessage(
-          session.phone_number,
-          `${EMOJIS.warning} We couldn't find your transfer yet. Bank transfers can take a few minutes to process. Please wait a moment and type *PAID* again, or check your bank app.`
-        );
-      } catch (err) {
-        console.error("[WhatsAppCheckout] PAID verification error", err);
-        await TwilioService.sendWhatsAppMessage(session.phone_number, "An error occurred while checking your payment. Please try again.");
+      if (invoiceStatus?.status === "paid") {
+        // Webhook already settled this. Resend the confirmation.
+        await this.handlePaymentConfirmation(session.invoice_id!);
+        return;
       }
+    } catch (err) {
+      console.error("[WhatsAppCheckout] Invoice status check error", err);
+    }
+
+    if (upper === "PAID" || upper === "STATUS" || upper === "CHECK") {
+      await TwilioService.sendWhatsAppMessage(
+        session.phone_number,
+        `${EMOJIS.warning} We haven't received your transfer yet. Bank transfers can take a few minutes to process.\n\n` +
+          `${EMOJIS.sparkle} Don't worry — you'll be notified *automatically* once payment is confirmed!\n\n` +
+          `If it's been more than 10 minutes, please check your bank app.`,
+      );
       return;
     }
 
     await TwilioService.sendWhatsAppMessage(
       session.phone_number,
-      `${EMOJIS.pay} Please transfer the funds to the provided account and type *PAID* when done.\n\nType *RESTART* to start a new session.`,
+      `${EMOJIS.pay} Waiting for your transfer…\n\n` +
+        `${EMOJIS.sparkle} Payment will be confirmed *automatically* once received.\n` +
+        `Type *PAID* or *STATUS* to check manually.\n\n` +
+        `Type *RESTART* to start a new session.`,
     );
   }
 
@@ -501,6 +490,7 @@ export class WhatsAppCheckoutService {
       console.log(`[WhatsAppService] Dynamic VA created successfully: ${dynamicAccount.accountNumber}`);
 
       // 4. Create payment record
+      const orderReference = `pz_${invoice.id}`;
       console.log(`[WhatsAppService] Creating payment record for invoice...`);
       const { error: paymentError } = await supabaseAdmin.from("payments").insert({
         invoice_id: invoice.id,
@@ -510,6 +500,23 @@ export class WhatsAppCheckoutService {
         status: "pending",
       });
       if (paymentError) throw new Error(`Failed to create payment record: ${paymentError.message}`);
+
+      // 4b. Create a pending wallet transaction so the webhook can find and
+      // settle it (mirrors what CheckoutService.createSession does for web).
+      const { error: transactionError } = await supabaseAdmin
+        .from("transactions")
+        .insert({
+          store_id: storeId,
+          type: "credit",
+          channel: "transfer",
+          amount: total,
+          reference: orderReference,
+          counterparty: `WhatsApp ${session.phone_number}`,
+          status: "pending",
+        });
+      if (transactionError) {
+        console.warn(`[WhatsAppService] Failed to create pending transaction (non-critical): ${transactionError.message}`);
+      }
 
       // 5. Update session
       await this.updateSession(session.id, {
@@ -533,7 +540,8 @@ export class WhatsAppCheckoutService {
           `🔢 Account Number: *${dynamicAccount.accountNumber}*\n` +
           `👤 Account Name: *${dynamicAccount.accountName || store.name}*\n\n` +
           `⚠️ *Important:* This account number is unique to your order. Transfer the exact amount shown.\n\n` +
-          `Once you've sent the money, type *PAID* to confirm.`,
+          `Once you've sent the money, type *PAID* to confirm.\n` +
+          `${EMOJIS.sparkle} _We'll also try to detect your payment automatically!_`,
       );
 
     } catch (err) {
@@ -697,7 +705,7 @@ export class WhatsAppCheckoutService {
         break;
       case "awaiting_payment":
         contextHelp =
-          "Transfer the total amount to the provided bank account.\n• *PAID* — confirm you've transferred the money\n• *RESTART* — start a new session";
+          "Transfer the total amount to the provided bank account.\n• Your payment will be detected *automatically*\n• *PAID* or *STATUS* — check payment status manually\n• *RESTART* — start a new session";
         break;
     }
 

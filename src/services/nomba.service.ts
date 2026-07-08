@@ -942,7 +942,8 @@ export class NombaService {
     }
 
     // Mark the pending wallet transaction successful. The checkout flow creates
-    // this row up front; if it is missing, fail instead of inventing ledger data.
+    // this row up front; if it is missing (e.g. older invoices), create one
+    // on the fly so the ledger stays consistent.
     if (paidInvoice) {
       const transactionReferences = [
         orderReference,
@@ -958,21 +959,39 @@ export class NombaService {
         .limit(1)
         .maybeSingle();
 
-      if (!existingTransaction) {
-        throw new Error(`Checkout transaction not found for references: ${[...new Set(transactionReferences)].join(", ")}`);
+      if (existingTransaction) {
+        const { error: transactionUpdateError } = await supabaseAdmin
+          .from("transactions")
+          .update({ status: "successful", counterparty })
+          .eq("id", existingTransaction.id);
+        if (transactionUpdateError) {
+          throw new Error(`Failed to update transaction: ${transactionUpdateError.message}`);
+        }
+        console.log(`[${logLabel}] Pending transaction marked successful`, {
+          ...logContext,
+          transactionRowId: existingTransaction.id,
+        });
+      } else {
+        // No pre-created pending row — create a completed one directly.
+        console.warn(`[${logLabel}] No pending transaction found for references: ${[...new Set(transactionReferences)].join(", ")}. Creating one now.`);
+        const { error: insertError } = await supabaseAdmin
+          .from("transactions")
+          .insert({
+            store_id: paidInvoice.store_id,
+            type: "credit",
+            channel: "transfer",
+            amount: paidInvoice.total_amount,
+            reference: merchantOrderReference,
+            counterparty: counterparty ?? "Bank Transfer",
+            status: "successful",
+          });
+        if (insertError) {
+          console.error(`[${logLabel}] Failed to create fallback transaction`, {
+            ...logContext,
+            error: insertError.message,
+          });
+        }
       }
-
-      const { error: transactionUpdateError } = await supabaseAdmin
-        .from("transactions")
-        .update({ status: "successful", counterparty })
-        .eq("id", existingTransaction.id);
-      if (transactionUpdateError) {
-        throw new Error(`Failed to update transaction: ${transactionUpdateError.message}`);
-      }
-      console.log(`[${logLabel}] Pending transaction marked successful`, {
-        ...logContext,
-        transactionRowId: existingTransaction.id,
-      });
     }
 
     // Decrement stock quantities for purchased items
